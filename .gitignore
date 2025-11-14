@@ -1,0 +1,114 @@
+# .NET Core
+*.swp
+*.*~
+project.lock.json
+.DS_Store
+*.pyc
+nupkg/
+
+# Visual Studio Code
+.vscode
+.ionide/
+
+# User-specific files
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+build/
+bld/
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+msbuild.log
+msbuild.err
+msbuild.wrn
+
+# Visual Studio
+.vs/
+.vs/config/
+*.obj
+*.pdb
+*.tmp
+*.log
+*.vspscc
+*.vssscc
+.builds
+*.pidb
+*.svclog
+*.scc
+
+# NuGet Packages
+*.nupkg
+*.snupkg
+**/packages/*
+!**/packages/build/
+*.nuget.props
+*.nuget.targets
+
+# MSTest test Results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+
+# NUNIT
+*.VisualState.xml
+TestResult.xml
+
+# .NET Core publish files
+**/Properties/PublishProfiles/*.pubxml
+**/Properties/launchSettings.json
+
+# Local development settings
+appsettings.Development.json
+appsettings.Local.json
+appsettings.json
+*.Development.json
+*.Local.json
+
+# User secrets
+*.usersecrets.json
+
+# Entity Framework Core
+Migrations/
+*.db
+*.db-shm
+*.db-wal
+
+# Docker
+.dockerignore
+docker-compose.yml
+docker-compose.*.yml
+
+# Temporary folders
+temp/
+tmp/
+
+# Tools
+.idea/
+*.sln.iml
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+# Sonarqube
+.sonarqube/
+.sonarlint/
+
+# Coverage tools
+coverage/
+coverage.json
+coverage.xml
+*.coverage
+*.coveragexml
+
+# Miscellaneous
+Thumbs.db
+desktop.ini
