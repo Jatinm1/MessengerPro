@@ -15,9 +15,22 @@ public class ChatService : IChatService
         return (convId, msgId);
     }
 
+    public async Task<(Guid ConversationId, long MessageId)> SendDirectAsync(Guid fromUserId, Guid toUserId, string body, string contentType, string? mediaUrl)
+    {
+        var convId = await _chat.GetOrCreateDirectConversationAsync(fromUserId, toUserId);
+        var msgId = await _chat.SaveMessageAsync(convId, fromUserId, body, contentType, mediaUrl);
+        return (convId, msgId);
+    }
+
     public async Task<(Guid ConversationId, long MessageId)> SendGroupMessageAsync(Guid conversationId, Guid senderId, string body)
     {
-        var msgId = await _chat.SaveMessageAsync(conversationId, senderId, body, "text");
+        var msgId = await _chat.SaveMessageAsync(conversationId, senderId, body, "text", null);
+        return (conversationId, msgId);
+    }
+
+    public async Task<(Guid ConversationId, long MessageId)> SendGroupMessageAsync(Guid conversationId, Guid senderId, string body, string contentType, string? mediaUrl)
+    {
+        var msgId = await _chat.SaveMessageAsync(conversationId, senderId, body, contentType, mediaUrl);
         return (conversationId, msgId);
     }
 

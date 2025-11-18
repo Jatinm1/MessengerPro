@@ -1,9 +1,9 @@
 ﻿using ChatApp.Domain.Chat;
 using ChatApp.Domain.Users;
+using ChatApp.Infrastructure;
+using ChatApp.Infrastructure.Repositories;
 using Dapper;
 using System.Data;
-
-namespace ChatApp.Infrastructure.Repositories;
 
 public class UserRepository : IUserRepository
 {
@@ -14,25 +14,30 @@ public class UserRepository : IUserRepository
     {
         using var con = _ctx.CreateConnection();
         return await con.QueryFirstOrDefaultAsync<User>(
-            "SELECT UserId, UserName, DisplayName, PasswordHash, CreatedAtUtc FROM Users WHERE UserName=@user",
-            new { user = userName });
+            "sp_GetUserByUserName",
+            new { UserName = userName },
+            commandType: CommandType.StoredProcedure);
     }
 
     public async Task<User?> GetByIdAsync(Guid userId)
     {
         using var con = _ctx.CreateConnection();
         return await con.QueryFirstOrDefaultAsync<User>(
-            "SELECT UserId, UserName, DisplayName, PasswordHash, CreatedAtUtc FROM Users WHERE UserId=@id",
-            new { id = userId });
+            "sp_GetUserById",
+            new { UserId = userId },
+            commandType: CommandType.StoredProcedure);
     }
 
     public async Task<Guid> CreateAsync(string userName, string displayName, string passwordHash)
     {
         using var con = _ctx.CreateConnection();
         var id = Guid.NewGuid();
+
         await con.ExecuteAsync(
-            "INSERT INTO Users(UserId,UserName,DisplayName,PasswordHash) VALUES(@id,@u,@d,@p)",
-            new { id, u = userName, d = displayName, p = passwordHash });
+            "sp_CreateUser",
+            new { UserId = id, UserName = userName, DisplayName = displayName, PasswordHash = passwordHash },
+            commandType: CommandType.StoredProcedure);
+
         return id;
     }
 
@@ -62,12 +67,21 @@ public class UserRepository : IUserRepository
             commandType: CommandType.StoredProcedure);
     }
 
-    public async Task UpdateUserProfileAsync(Guid userId, string? displayName, string? profilePhotoUrl, string? bio)
+    public async Task UpdateUserProfileAsync(Guid userId, string? displayName, string? bio)
     {
         using var con = _ctx.CreateConnection();
         await con.ExecuteAsync(
             "sp_UpdateUserProfile",
-            new { UserId = userId, DisplayName = displayName, ProfilePhotoUrl = profilePhotoUrl, Bio = bio },
+            new { UserId = userId, DisplayName = displayName, Bio = bio },
+            commandType: CommandType.StoredProcedure);
+    }
+
+    public async Task UpdateProfilePhotoAsync(Guid userId, string profilePhotoUrl)
+    {
+        using var con = _ctx.CreateConnection();
+        await con.ExecuteAsync(
+            "sp_UpdateProfilePhoto",
+            new { UserId = userId, ProfilePhotoUrl = profilePhotoUrl },
             commandType: CommandType.StoredProcedure);
     }
 
@@ -79,6 +93,7 @@ public class UserRepository : IUserRepository
             new { UserId = userId, IsOnline = isOnline },
             commandType: CommandType.StoredProcedure);
     }
+
     public async Task LogoutUserAsync(Guid userId)
     {
         using var con = _ctx.CreateConnection();
@@ -87,5 +102,4 @@ public class UserRepository : IUserRepository
             new { UserId = userId },
             commandType: CommandType.StoredProcedure);
     }
-
 }

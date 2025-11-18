@@ -3,6 +3,7 @@ using ChatApp.Application.Services;
 using ChatApp.Infrastructure;
 using ChatApp.Infrastructure.Repositories;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System.Text;
@@ -25,6 +26,21 @@ builder.Services.AddCors(options =>
     });
 });
 
+// Add file upload size limit
+builder.Services.Configure<FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = 52428800; // 50MB
+});
+
+// Add Cloudinary service
+builder.Services.AddScoped<ICloudinaryService, CloudinaryService>();
+
+// Configure Kestrel for larger file uploads
+builder.WebHost.ConfigureKestrel(serverOptions =>
+{
+    serverOptions.Limits.MaxRequestBodySize = 52428800; // 50MB
+});
+
 // =============================
 // ✅ SignalR setup
 // =============================
@@ -36,12 +52,17 @@ builder.Services.AddSignalR();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IUserService, UserService>(); // NEW
+builder.Services.AddScoped<IGroupService, GroupService>(); // NEW
+builder.Services.AddScoped<IGroupRepository, GroupRepository>(); // NEW
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IChatRepository, ChatRepository>();
 builder.Services.AddScoped<IFriendRepository, FriendRepository>();
 builder.Services.AddScoped<IFriendService, FriendService>();
+builder.Services.AddScoped<ICloudinaryService, CloudinaryService>();
+
 
 builder.Services.AddSingleton<DapperContext>(); // holds SqlConnection factory
+
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();

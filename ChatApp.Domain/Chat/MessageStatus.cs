@@ -22,6 +22,8 @@ public record MessageWithStatusDto(
     string FromUserName,
     string FromDisplayName,
     string Body,
+    string ContentType,
+    string? MediaUrl,
     DateTime CreatedAtUtc,
-    string? MessageStatus // For sender: overall status (Sent/Delivered/Read)
+    string? MessageStatus // For sender: Sent/Delivered/Read
 );

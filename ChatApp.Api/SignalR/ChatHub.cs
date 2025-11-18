@@ -501,4 +501,107 @@ public class ChatHub : Hub
             Console.WriteLine($"[FriendRequest] {userId} rejected request from {senderId}");
         }
     }
+
+    // Add these methods to your existing ChatHub
+
+    public async Task SendDirectMedia(Guid toUserId, string mediaUrl, string mediaType, string? caption)
+    {
+        var fromUserId = CurrentUserId;
+
+        // Check friendship
+        if (!await _friendService.AreFriendsAsync(fromUserId, toUserId))
+        {
+            await Clients.Caller.SendAsync("error", "You can only message friends");
+            return;
+        }
+
+        // Save message with media
+        var body = caption ?? mediaUrl;
+        var (convId, msgId) = await _chat.SendDirectAsync(fromUserId, toUserId, body, mediaType, mediaUrl);
+        var fromUser = await _users.GetByIdAsync(fromUserId);
+
+        var payload = new
+        {
+            MessageId = msgId,
+            ConversationId = convId,
+            FromUserId = fromUserId,
+            FromUserName = fromUser?.UserName ?? "Unknown",
+            FromDisplayName = fromUser?.DisplayName ?? "Unknown",
+            Body = body,
+            ContentType = mediaType,
+            MediaUrl = mediaUrl,
+            CreatedAtUtc = DateTime.UtcNow,
+            MessageStatus = "Sent"
+        };
+
+        // Send to receiver
+        await Clients.Group($"user:{toUserId}").SendAsync("messageReceived", payload);
+
+        // Auto-mark as delivered if receiver is online
+        if (_userConnections.ContainsKey(toUserId))
+        {
+            await _chat.UpdateMessageStatusAsync(msgId, toUserId, "Delivered");
+
+            await Clients.Group($"user:{fromUserId}").SendAsync("messageStatusUpdated", new
+            {
+                messageId = msgId,
+                conversationId = convId,
+                status = "Delivered"
+            });
+        }
+
+        // Sender confirmation
+        await Clients.Caller.SendAsync("messageSent", payload);
+
+        Console.WriteLine($"[Media] {fromUser?.UserName} → {toUserId}: {mediaType}");
+    }
+
+    public async Task SendGroupMedia(Guid conversationId, string mediaUrl, string mediaType, string? caption)
+    {
+        var senderId = CurrentUserId;
+        var sender = await _users.GetByIdAsync(senderId);
+
+        // Get group details to verify membership
+        var groupDetails = await _chat.GetGroupDetailsAsync(conversationId, senderId);
+        if (groupDetails == null)
+        {
+            await Clients.Caller.SendAsync("error", "You are not a member of this group");
+            return;
+        }
+
+        // Save message with media
+        var body = caption ?? mediaUrl;
+        var (convId, msgId) = await _chat.SendGroupMessageAsync(conversationId, senderId, body, mediaType, mediaUrl);
+
+        var payload = new
+        {
+            MessageId = msgId,
+            ConversationId = conversationId,
+            FromUserId = senderId,
+            FromUserName = sender?.UserName ?? "Unknown",
+            FromDisplayName = sender?.DisplayName ?? "Unknown",
+            Body = body,
+            ContentType = mediaType,
+            MediaUrl = mediaUrl,
+            CreatedAtUtc = DateTime.UtcNow,
+            MessageStatus = "Sent"
+        };
+
+        // Send to all group members except sender
+        foreach (var member in groupDetails.Members.Where(m => m.UserId != senderId))
+        {
+            await Clients.Group($"user:{member.UserId}").SendAsync("messageReceived", payload);
+
+            // Auto-mark as delivered if member is online
+            if (_userConnections.ContainsKey(member.UserId))
+            {
+                await _chat.UpdateMessageStatusAsync(msgId, member.UserId, "Delivered");
+            }
+        }
+
+        // Send confirmation to sender
+        await Clients.Caller.SendAsync("messageSent", payload);
+
+        Console.WriteLine($"[GroupMedia] {sender?.UserName} → Group {groupDetails.GroupName}: {mediaType}");
+    }
 }

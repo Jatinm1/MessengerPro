@@ -15,11 +15,13 @@ public class ChatController : ControllerBase
 {
     private readonly IChatService _chatService;
     private readonly IUserRepository _users;
+    private readonly ICloudinaryService _cloudinaryService;
 
-    public ChatController(IChatService chatService, IUserRepository userRepository)
+    public ChatController(IChatService chatService, IUserRepository userRepository, ICloudinaryService cloudinaryService)
     {
         _chatService = chatService;
         _users = userRepository;
+        _cloudinaryService = cloudinaryService;
     }
 
     private Guid CurrentUserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier) ??
@@ -145,5 +147,94 @@ public class ChatController : ControllerBase
     {
         var result = await _chatService.GetMessageStatusAsync(messageId);
         return Ok(result);
+    }
+
+    // Add these methods to your existing ChatController
+
+    [HttpPost("group/{conversationId}/photo")]
+    [RequestSizeLimit(10_000_000)] // 10MB limit
+    public async Task<IActionResult> UploadGroupPhoto(Guid conversationId, IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new { error = "No file uploaded" });
+
+        // Validate file type
+        var allowedTypes = new[] { "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp" };
+        if (!allowedTypes.Contains(file.ContentType.ToLower()))
+            return BadRequest(new { error = "Invalid file type. Only images are allowed." });
+
+        // Validate file size (10MB)
+        if (file.Length > 10_000_000)
+            return BadRequest(new { error = "File size must be less than 10MB" });
+
+        // Verify user is admin of the group
+        var groupDetails = await _chatService.GetGroupDetailsAsync(conversationId, CurrentUserId);
+        if (groupDetails == null)
+            return NotFound(new { error = "Group not found or you're not a member" });
+
+        var isAdmin = groupDetails.Members.Any(m => m.UserId == CurrentUserId && m.IsAdmin);
+        if (!isAdmin)
+            return Forbid();
+
+        try
+        {
+            using var stream = file.OpenReadStream();
+            var (url, publicId, error) = await _cloudinaryService.UploadImageAsync(stream, file.FileName);
+
+            if (error != null)
+                return BadRequest(new { error = $"Upload failed: {error}" });
+
+            // Update group photo
+            await _chatService.UpdateGroupInfoAsync(conversationId, CurrentUserId, null, url);
+
+            return Ok(new { url, publicId });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { error = $"Upload failed: {ex.Message}" });
+        }
+    }
+
+    [HttpPost("upload/media")]
+    [RequestSizeLimit(50_000_000)] // 50MB limit
+    public async Task<IActionResult> UploadMedia(IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new { error = "No file uploaded" });
+
+        var contentType = file.ContentType.ToLower();
+        var isImage = contentType.StartsWith("image/");
+        var isVideo = contentType.StartsWith("video/");
+
+        if (!isImage && !isVideo)
+            return BadRequest(new { error = "Only images and videos are allowed" });
+
+        // Validate file size
+        var maxSize = isImage ? 10_000_000 : 50_000_000; // 10MB for images, 50MB for videos
+        if (file.Length > maxSize)
+            return BadRequest(new { error = $"File size must be less than {maxSize / 1_000_000}MB" });
+
+        try
+        {
+            using var stream = file.OpenReadStream();
+            var (url, publicId, error) = isImage
+                ? await _cloudinaryService.UploadImageAsync(stream, file.FileName)
+                : await _cloudinaryService.UploadVideoAsync(stream, file.FileName);
+
+            if (error != null)
+                return BadRequest(new { error = $"Upload failed: {error}" });
+
+            return Ok(new
+            {
+                url,
+                publicId,
+                type = isImage ? "image" : "video",
+                contentType = file.ContentType
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { error = $"Upload failed: {ex.Message}" });
+        }
     }
 }

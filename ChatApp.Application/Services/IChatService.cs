@@ -9,6 +9,17 @@ namespace ChatApp.Application.Services
         Task<(Guid ConversationId, long MessageId)> SendGroupMessageAsync(Guid conversationId, Guid senderId, string body);
         Task<IEnumerable<ContactDto>> GetContactsAsync(Guid userId);
         Task<IEnumerable<MessageWithStatusDto>> GetChatHistoryAsync(Guid conversationId, Guid userId, int page, int pageSize);
+
+        // Existing methods...
+        //Task<(Guid ConversationId, long MessageId)> SendDirectAsync(Guid fromUserId, Guid toUserId, string body);
+
+        // New overload with media support
+        Task<(Guid ConversationId, long MessageId)> SendDirectAsync(Guid fromUserId, Guid toUserId, string body, string contentType, string? mediaUrl);
+
+        //Task<(Guid ConversationId, long MessageId)> SendGroupMessageAsync(Guid conversationId, Guid senderId, string body);
+
+        // New overload with media support
+        Task<(Guid ConversationId, long MessageId)> SendGroupMessageAsync(Guid conversationId, Guid senderId, string body, string contentType, string? mediaUrl);
         Task<Guid> GetOrCreateConversationAsync(Guid userA, Guid userB);
         //Task MarkMessagesAsReadAsync(Guid conversationId, Guid userId, long lastReadMessageId);
         Task<IEnumerable<Guid>> MarkMessagesAsReadAsync(Guid conversationId, Guid userId, long lastReadMessageId);
