@@ -23,7 +23,11 @@ namespace ChatApp.Infrastructure.Repositories
         Task<GroupDetailsDto?> GetGroupDetailsAsync(Guid conversationId, Guid userId);
         Task<string?> AddGroupMemberAsync(Guid conversationId, Guid userId, Guid addedBy);
         Task<string?> RemoveGroupMemberAsync(Guid conversationId, Guid userId, Guid removedBy);
+        Task<string?> LeaveGroupAsync(Guid conversationId, Guid userId);
         Task<string?> UpdateGroupInfoAsync(Guid conversationId, Guid userId, string? groupName, string? groupPhotoUrl);
+        Task<bool> IsUserAdminAsync(Guid conversationId, Guid userId);
+        Task<string?> TransferAdminAsync(Guid conversationId, Guid oldAdminId, Guid newAdminId);
+
 
         // Message Status
         Task UpdateMessageStatusAsync(long messageId, Guid userId, string status);

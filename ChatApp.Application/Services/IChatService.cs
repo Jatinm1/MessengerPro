@@ -9,6 +9,8 @@ namespace ChatApp.Application.Services
         Task<(Guid ConversationId, long MessageId)> SendGroupMessageAsync(Guid conversationId, Guid senderId, string body);
         Task<IEnumerable<ContactDto>> GetContactsAsync(Guid userId);
         Task<IEnumerable<MessageWithStatusDto>> GetChatHistoryAsync(Guid conversationId, Guid userId, int page, int pageSize);
+        Task<bool> IsUserAdminAsync(Guid conversationId, Guid userId);
+        Task<string?> TransferAdminAsync(Guid conversationId, Guid oldAdminId, Guid newAdminId);
 
         // Existing methods...
         //Task<(Guid ConversationId, long MessageId)> SendDirectAsync(Guid fromUserId, Guid toUserId, string body);
@@ -30,6 +32,7 @@ namespace ChatApp.Application.Services
         Task<GroupDetailsDto?> GetGroupDetailsAsync(Guid conversationId, Guid userId);
         Task<string?> AddGroupMemberAsync(Guid conversationId, Guid userId, Guid addedBy);
         Task<string?> RemoveGroupMemberAsync(Guid conversationId, Guid userId, Guid removedBy);
+        Task<string?> LeaveGroupAsync(Guid conversationId, Guid userId);
         Task<string?> UpdateGroupInfoAsync(Guid conversationId, Guid userId, string? groupName, string? groupPhotoUrl);
 
         // Message status

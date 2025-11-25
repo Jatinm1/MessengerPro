@@ -69,6 +69,22 @@ public class ChatService : IChatService
     public async Task<string?> RemoveGroupMemberAsync(Guid conversationId, Guid userId, Guid removedBy)
         => await _chat.RemoveGroupMemberAsync(conversationId, userId, removedBy);
 
+    public async Task<string?> LeaveGroupAsync(Guid conversationId, Guid userId)
+    => await _chat.LeaveGroupAsync(conversationId, userId);
+
+    public async Task<bool> IsUserAdminAsync(Guid conversationId, Guid userId)
+    {
+        return await _chat.IsUserAdminAsync(conversationId, userId);
+    }
+
+    public async Task<string?> TransferAdminAsync(Guid conversationId, Guid oldAdminId, Guid newAdminId)
+    {
+        // repository returns error message or null on success
+        return await _chat.TransferAdminAsync(conversationId, oldAdminId, newAdminId);
+    }
+
+
+
     public async Task<string?> UpdateGroupInfoAsync(Guid conversationId, Guid userId, string? groupName, string? groupPhotoUrl)
         => await _chat.UpdateGroupInfoAsync(conversationId, userId, groupName, groupPhotoUrl);
 

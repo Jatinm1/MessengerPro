@@ -181,6 +181,60 @@ public class ChatRepository : IChatRepository
         return p.Get<string?>("@ErrorMessage");
     }
 
+    public async Task<string?> LeaveGroupAsync(Guid conversationId, Guid userId)
+    {
+        using var con = _ctx.CreateConnection();
+
+        var p = new DynamicParameters();
+        p.Add("@ConversationId", conversationId);
+        p.Add("@UserId", userId);
+        p.Add("@ErrorMessage", dbType: DbType.String, direction: ParameterDirection.Output, size: 500);
+
+        await con.ExecuteAsync("sp_LeaveGroup", p, commandType: CommandType.StoredProcedure);
+        return p.Get<string?>("@ErrorMessage");
+    }
+
+    public async Task<bool> IsUserAdminAsync(Guid conversationId, Guid userId)
+    {
+        using var con = _ctx.CreateConnection();
+        var result = await con.ExecuteScalarAsync<int>(
+            "sp_IsUserAdmin",
+            new { ConversationId = conversationId, UserId = userId },
+            commandType: CommandType.StoredProcedure);
+
+        return result == 1;
+    }
+
+    public async Task<IEnumerable<UserDto>> GetGroupMembersAsync(Guid conversationId)
+    {
+        using var con = _ctx.CreateConnection();
+        var members = await con.QueryAsync<UserDto>(
+          @"SELECT u.UserId, u.DisplayName, u.UserName, u.ProfilePhotoUrl
+        FROM ConversationMembers cm
+        JOIN Users u ON cm.UserId = u.UserId
+        WHERE cm.ConversationId = @ConversationId
+        ORDER BY cm.AddedAtUtc",
+          new { ConversationId = conversationId });
+        return members;
+    }
+
+    public async Task<string?> TransferAdminAsync(Guid conversationId, Guid oldAdminId, Guid newAdminId)
+    {
+        using var con = _ctx.CreateConnection();
+        var p = new DynamicParameters();
+        p.Add("@ConversationId", conversationId);
+        p.Add("@OldAdminId", oldAdminId);
+        p.Add("@NewAdminId", newAdminId);
+        p.Add("@ErrorMessage", dbType: DbType.String, direction: ParameterDirection.Output, size: 500);
+
+        await con.ExecuteAsync("sp_TransferAdmin", p, commandType: CommandType.StoredProcedure);
+        return p.Get<string?>("@ErrorMessage");
+    }
+
+
+
+
+
     public async Task<string?> UpdateGroupInfoAsync(Guid conversationId, Guid userId, string? groupName, string? groupPhotoUrl)
     {
         using var con = _ctx.CreateConnection();
@@ -224,4 +278,6 @@ public class ChatRepository : IChatRepository
             new { MessageId = messageId },
             commandType: CommandType.StoredProcedure);
     }
+
+
 }

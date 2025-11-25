@@ -407,6 +407,21 @@ public class ChatHub : Hub
         Console.WriteLine($"[Group] Info updated for {conversationId} by {userId}");
     }
 
+
+    public async Task NotifyGroupLeft(Guid conversationId)
+    {
+        var userId = CurrentUserId;
+
+        // This client (the leaver) should remove the group immediately
+        await Clients.Group($"user:{userId}").SendAsync("groupLeft", new
+        {
+            conversationId = conversationId
+        });
+
+        Console.WriteLine($"[Group] User {userId} left group {conversationId}");
+    }
+
+
     // ========================================
     // FRIEND REQUEST REAL-TIME
     // ========================================

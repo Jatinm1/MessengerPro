@@ -1,9 +1,11 @@
-﻿using ChatApp.Application.Services;
+﻿using ChatApp.Api.SignalR;
+using ChatApp.Application.Services;
 using ChatApp.Domain.Chat;
 using ChatApp.Domain.Users;
 using ChatApp.Infrastructure.Repositories;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using System.Security.Claims;
 
 namespace ChatApp.Api.Controllers;
@@ -16,12 +18,14 @@ public class ChatController : ControllerBase
     private readonly IChatService _chatService;
     private readonly IUserRepository _users;
     private readonly ICloudinaryService _cloudinaryService;
+    private readonly IHubContext<ChatHub> _hub;
 
-    public ChatController(IChatService chatService, IUserRepository userRepository, ICloudinaryService cloudinaryService)
+    public ChatController(IChatService chatService, IUserRepository userRepository, ICloudinaryService cloudinaryService, IHubContext<ChatHub> hub)
     {
         _chatService = chatService;
         _users = userRepository;
         _cloudinaryService = cloudinaryService;
+        _hub = hub;
     }
 
     private Guid CurrentUserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier) ??
@@ -114,6 +118,46 @@ public class ChatController : ControllerBase
 
         return Ok(new { message = "Member removed successfully" });
     }
+
+    [HttpPost("group/{conversationId}/leave")]
+    public async Task<IActionResult> LeaveGroup(Guid conversationId)
+    {
+        var error = await _chatService.LeaveGroupAsync(conversationId, CurrentUserId);
+        if (error != null)
+            return BadRequest(new { error });
+
+        // 🔥 Notify via SignalR (user-side removal)
+        await _hub.Clients.Group($"user:{CurrentUserId}").SendAsync("groupLeft", new
+        {
+            conversationId = conversationId
+        });
+
+        return Ok(new { message = "Left group successfully" });
+    }
+
+
+
+
+    // GET: /api/chat/group/{conversationId}/is-admin
+    [HttpGet("group/{conversationId}/is-admin")]
+    public async Task<IActionResult> IsUserAdmin(Guid conversationId)
+    {
+        var isAdmin = await _chatService.IsUserAdminAsync(conversationId, CurrentUserId);
+        return Ok(new { isAdmin });
+    }
+
+
+    // POST: /api/chat/group/{conversationId}/transfer-admin
+    [HttpPost("group/{conversationId}/transfer-admin")]
+    public async Task<IActionResult> TransferAdmin(Guid conversationId, [FromBody] TransferAdminDto dto)
+    {
+        var error = await _chatService.TransferAdminAsync(conversationId, CurrentUserId, dto.NewAdminId);
+        if (error != null) return BadRequest(new { error });
+        return Ok(new { message = "Admin transferred successfully" });
+    }
+
+
+
 
     [HttpPut("group/{conversationId}")]
     public async Task<IActionResult> UpdateGroupInfo(Guid conversationId, [FromBody] UpdateGroupInfoRequest request)
