@@ -6,7 +6,11 @@ namespace ChatApp.Application.Services;
 public class ChatService : IChatService
 {
     private readonly IChatRepository _chat;
-    public ChatService(IChatRepository chat) => _chat = chat;
+    private readonly IGroupRepository _groupRepository;
+    public ChatService(IChatRepository chat, IGroupRepository groupRepository)
+    { _chat = chat; 
+        _groupRepository = groupRepository;
+    }
 
     public async Task<(Guid ConversationId, long MessageId)> SendDirectAsync(Guid fromUserId, Guid toUserId, string body)
     {
@@ -97,4 +101,7 @@ public class ChatService : IChatService
 
     public async Task<IEnumerable<MessageStatusDto>> GetMessageStatusAsync(long messageId)
         => await _chat.GetMessageStatusAsync(messageId);
+
+    public async Task<string?> DeleteGroupAsync(Guid conversationId, Guid userId)
+    => await _groupRepository.DeleteGroupAsync(conversationId, userId);
 }

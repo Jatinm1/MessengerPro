@@ -40,6 +40,8 @@ namespace ChatApp.Application.Services
         Task<IEnumerable<MessageStatusDto>> GetMessageStatusAsync(long messageId);
         Task<Guid?> GetSenderIdByMessageIdAsync(long messageId);
 
+        Task<string?> DeleteGroupAsync(Guid conversationId, Guid userId);
+
 
     }
 }

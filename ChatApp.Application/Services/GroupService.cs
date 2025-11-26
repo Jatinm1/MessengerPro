@@ -36,4 +36,7 @@ public class GroupService : IGroupService
 
     public async Task<string?> UpdateGroupPhotoAsync(Guid conversationId, Guid userId, string groupPhotoUrl)
         => await _groupRepository.UpdateGroupPhotoAsync(conversationId, userId, groupPhotoUrl);
+
+    public async Task<string?> DeleteGroupAsync(Guid conversationId, Guid userId)
+    => await _groupRepository.DeleteGroupAsync(conversationId, userId);
 }

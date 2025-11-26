@@ -619,4 +619,40 @@ public class ChatHub : Hub
 
         Console.WriteLine($"[GroupMedia] {sender?.UserName} → Group {groupDetails.GroupName}: {mediaType}");
     }
+
+    public async Task DeleteGroup(Guid conversationId)
+    {
+        var userId = CurrentUserId;
+
+        // ✅ Fetch group BEFORE deleting
+        var groupDetails = await _chat.GetGroupDetailsAsync(conversationId, userId);
+        if (groupDetails == null)
+        {
+            await Clients.Caller.SendAsync("groupError", "Group not found.");
+            return;
+        }
+
+        // ❗ Delete AFTER fetching details
+        var errorMessage = await _chat.DeleteGroupAsync(conversationId, userId);
+        if (errorMessage != null)
+        {
+            await Clients.Caller.SendAsync("groupError", errorMessage);
+            return;
+        }
+
+        // 🔥 Now broadcast to all members
+        foreach (var member in groupDetails.Members)
+        {
+            await Clients.Group($"user:{member.UserId}")
+                .SendAsync("groupDeleted", new
+                {
+                    conversationId = conversationId,
+                    groupName = groupDetails.GroupName,
+                    deletedBy = userId
+                });
+        }
+
+        Console.WriteLine($"[Group] Group {conversationId} deleted by {userId}");
+    }
+
 }

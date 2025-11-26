@@ -116,4 +116,17 @@ public class GroupRepository : IGroupRepository
         await con.ExecuteAsync("sp_UpdateGroupPhoto", p, commandType: CommandType.StoredProcedure);
         return p.Get<string?>("@ErrorMessage");
     }
+
+    public async Task<string?> DeleteGroupAsync(Guid conversationId, Guid userId)
+    {
+        using var con = _ctx.CreateConnection();
+
+        var p = new DynamicParameters();
+        p.Add("@ConversationId", conversationId);
+        p.Add("@UserId", userId);
+        p.Add("@ErrorMessage", dbType: DbType.String, direction: ParameterDirection.Output, size: 500);
+
+        await con.ExecuteAsync("sp_DeleteGroup", p, commandType: CommandType.StoredProcedure);
+        return p.Get<string?>("@ErrorMessage");
+    }
 }

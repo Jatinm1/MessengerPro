@@ -1,7 +1,9 @@
-﻿using ChatApp.Application.Services;
+﻿using ChatApp.Api.SignalR;
+using ChatApp.Application.Services;
 using ChatApp.Domain.Chat;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using System.Security.Claims;
 
 namespace ChatApp.Api.Controllers;
@@ -13,11 +15,14 @@ public class GroupController : ControllerBase
 {
     private readonly IGroupService _groupService;
     private readonly ICloudinaryService _cloudinaryService;
+    private readonly IHubContext<ChatHub> _hub;
 
-    public GroupController(IGroupService groupService, ICloudinaryService cloudinaryService)
+
+    public GroupController(IGroupService groupService, ICloudinaryService cloudinaryService,IHubContext<ChatHub> hub)
     {
         _groupService = groupService;
         _cloudinaryService = cloudinaryService;
+        _hub = hub;
     }
 
     private Guid CurrentUserId => Guid.Parse(
@@ -25,12 +30,13 @@ public class GroupController : ControllerBase
         User.FindFirstValue("sub")!
     );
 
-    // POST: api/group/create
     [HttpPost("create")]
-    public async Task<IActionResult> CreateGroup([FromBody] CreateGroupRequest request)
+    public async Task<IActionResult> CreateGroup(CreateGroupRequest request)
     {
+        var creatorId = CurrentUserId;
+
         var (conversationId, errorMessage) = await _groupService.CreateGroupAsync(
-            CurrentUserId,
+            creatorId,
             request.GroupName,
             request.GroupPhotoUrl,
             request.MemberUserIds
@@ -39,8 +45,20 @@ public class GroupController : ControllerBase
         if (errorMessage != null)
             return BadRequest(new { error = errorMessage });
 
-        return Ok(new { conversationId });
+        // Get full group details
+        var groupDetails = await _groupService.GetGroupDetailsAsync(conversationId.Value, CurrentUserId);
+
+        // 🔥 Notify ALL members
+        foreach (var member in groupDetails.Members)
+        {
+            await _hub.Clients.Group($"user:{member.UserId}")
+                .SendAsync("groupCreated", groupDetails);
+        }
+
+        return Ok(groupDetails);
     }
+
+
 
     // GET: api/group/{conversationId}
     [HttpGet("{conversationId}")]
@@ -93,6 +111,36 @@ public class GroupController : ControllerBase
             return BadRequest(new { error = errorMessage });
 
         return Ok(new { message = "Group updated successfully" });
+    }
+
+    [HttpDelete("{conversationId}")]
+    public async Task<IActionResult> DeleteGroup(Guid conversationId)
+    {
+        var userId = CurrentUserId;
+
+        // Get details BEFORE deletion
+        var groupDetails = await _groupService.GetGroupDetailsAsync(conversationId, userId);
+        if (groupDetails == null)
+            return NotFound();
+
+        // Delete it
+        var error = await _groupService.DeleteGroupAsync(conversationId, userId);
+        if (error != null)
+            return BadRequest(new { error });
+
+        // 🔥 Broadcast deletion notification
+        foreach (var member in groupDetails.Members)
+        {
+            await _hub.Clients.Group($"user:{member.UserId}")
+                .SendAsync("groupDeleted", new
+                {
+                    conversationId,
+                    groupName = groupDetails.GroupName,
+                    deletedBy = userId
+                });
+        }
+
+        return Ok(new { message = "Group deleted successfully" });
     }
 
     // POST: api/group/{conversationId}/photo

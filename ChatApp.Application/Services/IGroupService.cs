@@ -8,4 +8,5 @@ public interface IGroupService
     Task<string?> RemoveGroupMemberAsync(Guid conversationId, Guid userId, Guid removedBy);
     Task<string?> UpdateGroupInfoAsync(Guid conversationId, Guid userId, string? groupName, string? groupPhotoUrl);
     Task<string?> UpdateGroupPhotoAsync(Guid conversationId, Guid userId, string groupPhotoUrl);
+    Task<string?> DeleteGroupAsync(Guid conversationId, Guid userId);
 }
