@@ -104,4 +104,21 @@ public class ChatService : IChatService
 
     public async Task<string?> DeleteGroupAsync(Guid conversationId, Guid userId)
     => await _groupRepository.DeleteGroupAsync(conversationId, userId);
+
+    // Add to ChatApp.Application/Services/ChatService.cs
+
+    public async Task<string?> DeleteMessageAsync(long messageId, Guid userId, bool deleteForEveryone)
+        => await _chat.DeleteMessageAsync(messageId, userId, deleteForEveryone);
+
+    public async Task<string?> EditMessageAsync(long messageId, Guid userId, string newBody)
+        => await _chat.EditMessageAsync(messageId, userId, newBody);
+
+    public async Task<(long? MessageId, string? ErrorMessage)> ForwardMessageAsync(long originalMessageId, Guid forwardedBy, Guid targetConversationId)
+        => await _chat.ForwardMessageAsync(originalMessageId, forwardedBy, targetConversationId);
+
+    public async Task<Guid> GetConversationIdByMessageIdAsync(long messageId)
+        => await _chat.GetConversationIdByMessageIdAsync(messageId);
+
+    public async Task<List<Guid>> GetConversationMembersAsync(Guid conversationId)
+        => await _chat.GetConversationMembersAsync(conversationId);
 }

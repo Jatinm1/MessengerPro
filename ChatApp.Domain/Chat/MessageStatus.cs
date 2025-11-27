@@ -15,15 +15,22 @@ public record MessageStatusDto(
     DateTime StatusTimestamp
 );
 
+// Update existing MessageWithStatusDto in ChatApp.Domain/Chat/Models.cs
+
+
 public record MessageWithStatusDto(
     long MessageId,
     Guid ConversationId,
     Guid FromUserId,
     string FromUserName,
     string FromDisplayName,
-    string Body,
+    string? Body,  // Can be null if deleted
     string ContentType,
     string? MediaUrl,
     DateTime CreatedAtUtc,
-    string? MessageStatus // For sender: Sent/Delivered/Read
+    bool IsEdited,
+    DateTime? EditedAtUtc,
+    bool IsDeleted,
+    bool DeletedForEveryone,
+    string? MessageStatus
 );

@@ -239,6 +239,78 @@ public class ChatController : ControllerBase
         }
     }
 
+    // Add to ChatApp.Api/Controllers/ChatController.cs
+
+    [HttpPost("message/{messageId}/delete")]
+    public async Task<IActionResult> DeleteMessage(long messageId, [FromBody] DeleteMessageRequest request)
+    {
+        var error = await _chatService.DeleteMessageAsync(messageId, CurrentUserId, request.DeleteForEveryone);
+
+        if (error != null)
+            return BadRequest(new { error });
+
+        // Get conversation details for SignalR notification
+        var conversationId = await _chatService.GetConversationIdByMessageIdAsync(messageId);
+        var members = await _chatService.GetConversationMembersAsync(conversationId);
+
+        // Notify all members
+        foreach (var memberId in members)
+        {
+            await _hub.Clients.Group($"user:{memberId}").SendAsync("messageDeleted", new
+            {
+                messageId = messageId,
+                conversationId = conversationId,
+                deletedBy = CurrentUserId,
+                deleteForEveryone = request.DeleteForEveryone
+            });
+        }
+
+        return Ok(new { message = "Message deleted successfully" });
+    }
+
+    [HttpPut("message/{messageId}/edit")]
+    public async Task<IActionResult> EditMessage(long messageId, [FromBody] EditMessageRequest request)
+    {
+        var error = await _chatService.EditMessageAsync(messageId, CurrentUserId, request.NewBody);
+
+        if (error != null)
+            return BadRequest(new { error });
+
+        // Get conversation details for SignalR notification
+        var conversationId = await _chatService.GetConversationIdByMessageIdAsync(messageId);
+        var members = await _chatService.GetConversationMembersAsync(conversationId);
+
+        // Notify all members
+        foreach (var memberId in members)
+        {
+            await _hub.Clients.Group($"user:{memberId}").SendAsync("messageEdited", new
+            {
+                messageId = messageId,
+                conversationId = conversationId,
+                newBody = request.NewBody,
+                editedBy = CurrentUserId,
+                editedAtUtc = DateTime.UtcNow
+            });
+        }
+
+        return Ok(new { message = "Message edited successfully" });
+    }
+
+    [HttpPost("message/{messageId}/forward")]
+    public async Task<IActionResult> ForwardMessage(long messageId, [FromBody] ForwardMessageRequest request)
+    {
+        var (newMessageId, error) = await _chatService.ForwardMessageAsync(
+            messageId,
+            CurrentUserId,
+            request.TargetConversationId
+        );
+
+        if (error != null)
+            return BadRequest(new { error });
+
+        return Ok(new { messageId = newMessageId, message = "Message forwarded successfully" });
+    }
+
     [HttpPost("upload/media")]
     [RequestSizeLimit(50_000_000)] // 50MB limit
     public async Task<IActionResult> UploadMedia(IFormFile file)

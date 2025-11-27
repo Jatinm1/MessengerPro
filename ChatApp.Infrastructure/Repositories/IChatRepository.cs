@@ -33,5 +33,13 @@ namespace ChatApp.Infrastructure.Repositories
         Task UpdateMessageStatusAsync(long messageId, Guid userId, string status);
         Task<IEnumerable<MessageStatusDto>> GetMessageStatusAsync(long messageId);
         Task<Guid?> GetSenderIdByMessageIdAsync(long messageId);
+
+        // Add to ChatApp.Infrastructure/Repositories/IChatRepository.cs
+
+        Task<string?> DeleteMessageAsync(long messageId, Guid userId, bool deleteForEveryone);
+        Task<string?> EditMessageAsync(long messageId, Guid userId, string newBody);
+        Task<(long? MessageId, string? ErrorMessage)> ForwardMessageAsync(long originalMessageId, Guid forwardedBy, Guid targetConversationId);
+        Task<Guid> GetConversationIdByMessageIdAsync(long messageId);
+        Task<List<Guid>> GetConversationMembersAsync(Guid conversationId);
     }
 }

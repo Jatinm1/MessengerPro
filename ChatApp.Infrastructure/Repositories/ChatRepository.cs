@@ -279,5 +279,73 @@ public class ChatRepository : IChatRepository
             commandType: CommandType.StoredProcedure);
     }
 
+    // Add to ChatApp.Infrastructure/Repositories/ChatRepository.cs
+
+    public async Task<string?> DeleteMessageAsync(long messageId, Guid userId, bool deleteForEveryone)
+    {
+        using var con = _ctx.CreateConnection();
+
+        var p = new DynamicParameters();
+        p.Add("@MessageId", messageId);
+        p.Add("@UserId", userId);
+        p.Add("@DeleteForEveryone", deleteForEveryone);
+
+        var result = await con.QueryFirstOrDefaultAsync<string>(
+            "sp_DeleteMessage",
+            p,
+            commandType: CommandType.StoredProcedure);
+
+        return result;
+    }
+
+    public async Task<string?> EditMessageAsync(long messageId, Guid userId, string newBody)
+    {
+        using var con = _ctx.CreateConnection();
+
+        var result = await con.QueryFirstOrDefaultAsync<string>(
+            "sp_EditMessage",
+            new { MessageId = messageId, UserId = userId, NewBody = newBody },
+            commandType: CommandType.StoredProcedure);
+
+        return result;
+    }
+
+    public async Task<(long? MessageId, string? ErrorMessage)> ForwardMessageAsync(long originalMessageId, Guid forwardedBy, Guid targetConversationId)
+    {
+        using var con = _ctx.CreateConnection();
+
+        var result = await con.QueryFirstOrDefaultAsync<dynamic>(
+            "sp_ForwardMessage",
+            new
+            {
+                OriginalMessageId = originalMessageId,
+                ForwardedBy = forwardedBy,
+                TargetConversationId = targetConversationId
+            },
+            commandType: CommandType.StoredProcedure);
+
+        if (result == null)
+            return (null, "Failed to forward message");
+
+        return ((long?)result.MessageId, (string?)result.ErrorMessage);
+    }
+
+    public async Task<Guid> GetConversationIdByMessageIdAsync(long messageId)
+    {
+        using var con = _ctx.CreateConnection();
+        return await con.ExecuteScalarAsync<Guid>(
+            "SELECT ConversationId FROM Messages WHERE MessageId = @MessageId",
+            new { MessageId = messageId });
+    }
+
+    public async Task<List<Guid>> GetConversationMembersAsync(Guid conversationId)
+    {
+        using var con = _ctx.CreateConnection();
+        var members = await con.QueryAsync<Guid>(
+            "SELECT UserId FROM ConversationMembers WHERE ConversationId = @ConversationId",
+            new { ConversationId = conversationId });
+        return members.ToList();
+    }
+
 
 }

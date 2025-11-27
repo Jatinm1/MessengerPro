@@ -42,6 +42,14 @@ namespace ChatApp.Application.Services
 
         Task<string?> DeleteGroupAsync(Guid conversationId, Guid userId);
 
+        // Add to ChatApp.Application/Services/IChatService.cs
+
+        Task<string?> DeleteMessageAsync(long messageId, Guid userId, bool deleteForEveryone);
+        Task<string?> EditMessageAsync(long messageId, Guid userId, string newBody);
+        Task<(long? MessageId, string? ErrorMessage)> ForwardMessageAsync(long originalMessageId, Guid forwardedBy, Guid targetConversationId);
+        Task<Guid> GetConversationIdByMessageIdAsync(long messageId);
+        Task<List<Guid>> GetConversationMembersAsync(Guid conversationId);
+
 
     }
 }

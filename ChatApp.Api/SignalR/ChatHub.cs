@@ -655,4 +655,127 @@ public class ChatHub : Hub
         Console.WriteLine($"[Group] Group {conversationId} deleted by {userId}");
     }
 
+    // Add to ChatApp.Api/SignalR/ChatHub.cs
+
+    public async Task DeleteMessage(long messageId, bool deleteForEveryone)
+    {
+        var userId = CurrentUserId;
+
+        var error = await _chat.DeleteMessageAsync(messageId, userId, deleteForEveryone);
+
+        if (error != null)
+        {
+            await Clients.Caller.SendAsync("messageActionError", error);
+            return;
+        }
+
+        var conversationId = await _chat.GetConversationIdByMessageIdAsync(messageId);
+        var members = await _chat.GetConversationMembersAsync(conversationId);
+
+        // Notify all members
+        foreach (var memberId in members)
+        {
+            await Clients.Group($"user:{memberId}").SendAsync("messageDeleted", new
+            {
+                messageId = messageId,
+                conversationId = conversationId,
+                deletedBy = userId,
+                deleteForEveryone = deleteForEveryone
+            });
+        }
+
+        Console.WriteLine($"[Message] Deleted: {messageId} by {userId} (deleteForEveryone: {deleteForEveryone})");
+    }
+
+    public async Task EditMessage(long messageId, string newBody)
+    {
+        var userId = CurrentUserId;
+
+        var error = await _chat.EditMessageAsync(messageId, userId, newBody);
+
+        if (error != null)
+        {
+            await Clients.Caller.SendAsync("messageActionError", error);
+            return;
+        }
+
+        var conversationId = await _chat.GetConversationIdByMessageIdAsync(messageId);
+        var members = await _chat.GetConversationMembersAsync(conversationId);
+
+        // Notify all members
+        foreach (var memberId in members)
+        {
+            await Clients.Group($"user:{memberId}").SendAsync("messageEdited", new
+            {
+                messageId = messageId,
+                conversationId = conversationId,
+                newBody = newBody,
+                editedBy = userId,
+                editedAtUtc = DateTime.UtcNow
+            });
+        }
+
+        Console.WriteLine($"[Message] Edited: {messageId} by {userId}");
+    }
+
+    public async Task ForwardMessage(long originalMessageId, Guid targetConversationId)
+    {
+        var userId = CurrentUserId;
+
+        var (newMessageId, error) = await _chat.ForwardMessageAsync(originalMessageId, userId, targetConversationId);
+
+        if (error != null)
+        {
+            await Clients.Caller.SendAsync("messageActionError", error);
+            return;
+        }
+
+        // Get message details and notify recipients
+        var groupDetails = await _chat.GetGroupDetailsAsync(targetConversationId, userId);
+        var sender = await _users.GetByIdAsync(userId);
+
+        // Get the forwarded message content
+        var messages = await _chat.GetChatHistoryAsync(targetConversationId, userId, 1, 1);
+        var forwardedMessage = messages.FirstOrDefault();
+
+        if (forwardedMessage != null)
+        {
+            var payload = new
+            {
+                MessageId = forwardedMessage.MessageId,
+                ConversationId = targetConversationId,
+                FromUserId = userId,
+                FromUserName = sender?.UserName ?? "Unknown",
+                FromDisplayName = sender?.DisplayName ?? "Unknown",
+                Body = forwardedMessage.Body,
+                ContentType = forwardedMessage.ContentType,
+                MediaUrl = forwardedMessage.MediaUrl,
+                CreatedAtUtc = forwardedMessage.CreatedAtUtc,
+                MessageStatus = "Sent"
+            };
+
+            // Notify all members
+            if (groupDetails != null)
+            {
+                foreach (var member in groupDetails.Members.Where(m => m.UserId != userId))
+                {
+                    await Clients.Group($"user:{member.UserId}").SendAsync("messageReceived", payload);
+                }
+            }
+            else
+            {
+                // Direct conversation
+                var members = await _chat.GetConversationMembersAsync(targetConversationId);
+                foreach (var memberId in members.Where(m => m != userId))
+                {
+                    await Clients.Group($"user:{memberId}").SendAsync("messageReceived", payload);
+                }
+            }
+
+            await Clients.Caller.SendAsync("messageSent", payload);
+        }
+
+        Console.WriteLine($"[Message] Forwarded: {originalMessageId} to {targetConversationId} by {userId}");
+    }
+
 }
