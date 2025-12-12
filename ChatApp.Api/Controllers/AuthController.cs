@@ -1,38 +1,62 @@
-﻿using ChatApp.Application.Services;
+﻿using ChatApp.Application.DTOs.Auth;
+using ChatApp.Application.Interfaces.IServices;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 
+namespace ChatApp.Api.Controllers;
+
 [ApiController]
-[Route("api/auth")]
+[Route("api/[controller]")]
 public class AuthController : ControllerBase
 {
-    private readonly IAuthService _auth;
-    public AuthController(IAuthService auth) => _auth = auth;
+    private readonly IAuthService _authService;
 
-    public record LoginReq(string UserName, string Password);
-    public record RegisterReq(string UserName, string DisplayName, string Password);
+    /// <summary>
+    /// Initializes a new instance of the AuthController with the required authentication service.
+    /// </summary>
+    public AuthController(IAuthService authService) => _authService = authService;
 
-    private Guid CurrentUserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier) ??
-                                             User.FindFirstValue("sub")!);
+    /// <summary>
+    /// Gets the current user's ID from the JWT token claims.
+    /// Returns either 'NameIdentifier' or 'sub' claim value as a Guid.
+    /// </summary>
+    private Guid CurrentUserId => Guid.Parse(
+        User.FindFirstValue(ClaimTypes.NameIdentifier) ??
+        User.FindFirstValue("sub")!);
 
+    /// <summary>
+    /// Registers a new user with the provided credentials.
+    /// </summary>
     [HttpPost("register")]
-    public async Task<IActionResult> Register(RegisterReq r)
-        => Ok(await _auth.RegisterAsync(r.UserName, r.DisplayName, r.Password));
-
-    [HttpPost("login")]
-    public async Task<IActionResult> Login(LoginReq r)
+    public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
-        var (token, user) = await _auth.LoginAsync(r.UserName, r.Password);
-        return Ok(new { token, user });
+        var user = await _authService.RegisterAsync(
+            request.UserName,
+            request.DisplayName,
+            request.Password);
+
+        return Ok(user);
     }
+
+    /// <summary>
+    /// Authenticates an existing user and returns login response with tokens.
+    /// </summary>
+    [HttpPost("login")]
+    public async Task<IActionResult> Login([FromBody] LoginRequest request)
+    {
+        var response = await _authService.LoginAsync(request.UserName, request.Password);
+        return Ok(response);
+    }
+
+    /// <summary>
+    /// Logs out the currently authenticated user by invalidating their refresh token.
+    /// </summary>
     [HttpPost("logout")]
     [Authorize]
     public async Task<IActionResult> Logout()
     {
-
-        await _auth.LogoutAsync(CurrentUserId);
+        await _authService.LogoutAsync(CurrentUserId);
         return Ok(new { message = "Logged out successfully" });
     }
-
 }

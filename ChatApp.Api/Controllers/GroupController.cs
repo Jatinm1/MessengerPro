@@ -1,6 +1,6 @@
-﻿using ChatApp.Api.SignalR;
-using ChatApp.Application.Services;
-using ChatApp.Domain.Chat;
+﻿using ChatApp.Api.Hubs;
+using ChatApp.Application.DTOs.Group;
+using ChatApp.Application.Interfaces.IServices;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
@@ -14,22 +14,37 @@ namespace ChatApp.Api.Controllers;
 public class GroupController : ControllerBase
 {
     private readonly IGroupService _groupService;
+    private readonly IChatService _chatService;
     private readonly ICloudinaryService _cloudinaryService;
     private readonly IHubContext<ChatHub> _hub;
 
-
-    public GroupController(IGroupService groupService, ICloudinaryService cloudinaryService,IHubContext<ChatHub> hub)
+    /// <summary>
+    /// Initializes a new instance of the GroupController with group management services.
+    /// </summary>
+    public GroupController(
+        IGroupService groupService,
+        ICloudinaryService cloudinaryService,
+        IHubContext<ChatHub> hub,
+        IChatService chatService)
     {
         _groupService = groupService;
         _cloudinaryService = cloudinaryService;
         _hub = hub;
+        _chatService = chatService;
     }
 
+    /// <summary>
+    /// Gets the current user's ID from the JWT token claims.
+    /// Returns either 'NameIdentifier' or 'sub' claim value as a Guid.
+    /// </summary>
     private Guid CurrentUserId => Guid.Parse(
         User.FindFirstValue(ClaimTypes.NameIdentifier) ??
         User.FindFirstValue("sub")!
     );
 
+    /// <summary>
+    /// Creates a new group chat with specified members and notifies all participants.
+    /// </summary>
     [HttpPost("create")]
     public async Task<IActionResult> CreateGroup(CreateGroupRequest request)
     {
@@ -48,7 +63,7 @@ public class GroupController : ControllerBase
         // Get full group details
         var groupDetails = await _groupService.GetGroupDetailsAsync(conversationId.Value, CurrentUserId);
 
-        // 🔥 Notify ALL members
+        // Notify all group members via SignalR
         foreach (var member in groupDetails.Members)
         {
             await _hub.Clients.Group($"user:{member.UserId}")
@@ -58,9 +73,9 @@ public class GroupController : ControllerBase
         return Ok(groupDetails);
     }
 
-
-
-    // GET: api/group/{conversationId}
+    /// <summary>
+    /// Retrieves detailed information about a specific group.
+    /// </summary>
     [HttpGet("{conversationId}")]
     public async Task<IActionResult> GetGroupDetails(Guid conversationId)
     {
@@ -72,7 +87,19 @@ public class GroupController : ControllerBase
         return Ok(result);
     }
 
-    // POST: api/group/{conversationId}/add-member
+    /// <summary>
+    /// Checks if the current user is an administrator of the specified group.
+    /// </summary>
+    [HttpGet("{conversationId}/is-admin")]
+    public async Task<IActionResult> IsUserAdmin(Guid conversationId)
+    {
+        var isAdmin = await _chatService.IsUserAdminAsync(conversationId, CurrentUserId);
+        return Ok(new { isAdmin });
+    }
+
+    /// <summary>
+    /// Adds a new member to an existing group.
+    /// </summary>
     [HttpPost("{conversationId}/add-member")]
     public async Task<IActionResult> AddGroupMember(Guid conversationId, [FromBody] AddGroupMemberRequest request)
     {
@@ -84,7 +111,9 @@ public class GroupController : ControllerBase
         return Ok(new { message = "Member added successfully" });
     }
 
-    // POST: api/group/{conversationId}/remove-member
+    /// <summary>
+    /// Removes a member from a group (admin-only action).
+    /// </summary>
     [HttpPost("{conversationId}/remove-member")]
     public async Task<IActionResult> RemoveGroupMember(Guid conversationId, [FromBody] RemoveGroupMemberRequest request)
     {
@@ -96,7 +125,23 @@ public class GroupController : ControllerBase
         return Ok(new { message = "Member removed successfully" });
     }
 
-    // PUT: api/group/{conversationId} (WITHOUT photo)
+    /// <summary>
+    /// Allows the current user to leave a group.
+    /// </summary>
+    [HttpPost("{conversationId}/leave")]
+    public async Task<IActionResult> LeaveGroup(Guid conversationId)
+    {
+        var errorMessage = await _chatService.LeaveGroupAsync(conversationId, CurrentUserId);
+
+        if (errorMessage != null)
+            return BadRequest(new { error = errorMessage });
+
+        return Ok(new { message = "Left group successfully" });
+    }
+
+    /// <summary>
+    /// Updates basic group information (name, description).
+    /// </summary>
     [HttpPut("{conversationId}")]
     public async Task<IActionResult> UpdateGroupInfo(Guid conversationId, [FromBody] UpdateGroupInfoRequest request)
     {
@@ -113,6 +158,26 @@ public class GroupController : ControllerBase
         return Ok(new { message = "Group updated successfully" });
     }
 
+    /// <summary>
+    /// Transfers group administration to another member.
+    /// </summary>
+    [HttpPost("{conversationId}/transfer-admin")]
+    public async Task<IActionResult> TransferAdmin(Guid conversationId, [FromBody] TransferAdminRequest request)
+    {
+        var errorMessage = await _chatService.TransferAdminAsync(
+            conversationId,
+            CurrentUserId,
+            request.NewAdminId);
+
+        if (errorMessage != null)
+            return BadRequest(new { error = errorMessage });
+
+        return Ok(new { message = "Admin transferred successfully" });
+    }
+
+    /// <summary>
+    /// Permanently deletes a group and notifies all members.
+    /// </summary>
     [HttpDelete("{conversationId}")]
     public async Task<IActionResult> DeleteGroup(Guid conversationId)
     {
@@ -123,12 +188,12 @@ public class GroupController : ControllerBase
         if (groupDetails == null)
             return NotFound();
 
-        // Delete it
+        // Delete group
         var error = await _groupService.DeleteGroupAsync(conversationId, userId);
         if (error != null)
             return BadRequest(new { error });
 
-        // 🔥 Broadcast deletion notification
+        // Notify all members about deletion
         foreach (var member in groupDetails.Members)
         {
             await _hub.Clients.Group($"user:{member.UserId}")
@@ -143,7 +208,10 @@ public class GroupController : ControllerBase
         return Ok(new { message = "Group deleted successfully" });
     }
 
-    // POST: api/group/{conversationId}/photo
+    /// <summary>
+    /// Uploads and sets a new group profile photo.
+    /// Maximum file size: 10MB. Allowed types: JPEG, PNG, GIF, WebP.
+    /// </summary>
     [HttpPost("{conversationId}/photo")]
     [RequestSizeLimit(10_000_000)]
     public async Task<IActionResult> UploadGroupPhoto(Guid conversationId, IFormFile file)
@@ -164,7 +232,7 @@ public class GroupController : ControllerBase
             if (error != null)
                 return BadRequest(new { error = $"Upload failed: {error}" });
 
-            // Update group photo
+            // Update group photo URL in database
             var errorMessage = await _groupService.UpdateGroupPhotoAsync(conversationId, CurrentUserId, url);
 
             if (errorMessage != null)
@@ -177,4 +245,14 @@ public class GroupController : ControllerBase
             return StatusCode(500, new { error = $"Upload failed: {ex.Message}" });
         }
     }
+}
+
+// DTOs for GroupController
+
+/// <summary>
+/// Request model for transferring group administration to another member.
+/// </summary>
+public class TransferAdminRequest
+{
+    public Guid NewAdminId { get; set; }
 }

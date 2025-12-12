@@ -1,0 +1,392 @@
+﻿using ChatApp.Application.DTOs.Chat;
+using ChatApp.Application.DTOs.Group;
+using ChatApp.Application.DTOs.User;
+using ChatApp.Application.Interfaces.IRepositories;
+using ChatApp.Domain.Chat;
+using ChatApp.Domain.Entities;
+using ChatApp.Domain.Enums;
+using ChatApp.Infrastructure.Persistence;
+using Dapper;
+using System.Data;
+
+namespace ChatApp.Infrastructure.Persistence.Repositories;
+
+public class ChatRepository : IChatRepository
+{
+    private readonly DapperContext _ctx;
+    public ChatRepository(DapperContext ctx) => _ctx = ctx;
+
+    // ----------------------------
+    // Conversation Handling
+    // ----------------------------
+    public async Task<Guid> GetOrCreateDirectConversationAsync(Guid a, Guid b)
+    {
+        using var con = _ctx.CreateConnection();
+        var p = new DynamicParameters();
+        p.Add("@UserA", a);
+        p.Add("@UserB", b);
+        p.Add("@ConversationId", dbType: DbType.Guid, direction: ParameterDirection.Output);
+        await con.ExecuteAsync("sp_GetOrCreateDirectConversation", p, commandType: CommandType.StoredProcedure);
+        return p.Get<Guid>("@ConversationId");
+    }
+
+    // ----------------------------
+    // Message Saving (Overloaded)
+    // ----------------------------
+
+    // TEXT ONLY
+    public async Task<long> SaveMessageAsync(Guid conversationId, Guid senderId, string body, string contentType)
+    {
+        using var con = _ctx.CreateConnection();
+        return await con.ExecuteScalarAsync<long>(
+            "sp_SaveMessage",
+            new
+            {
+                ConversationId = conversationId,
+                SenderId = senderId,
+                Body = body,
+                ContentType = contentType,
+                MediaUrl = (string?)null
+            },
+            commandType: CommandType.StoredProcedure
+        );
+    }
+
+    // TEXT + IMAGE/VIDEO
+    public async Task<long> SaveMessageAsync(Guid conversationId, Guid senderId, string body, string contentType, string? mediaUrl)
+    {
+        using var con = _ctx.CreateConnection();
+        return await con.ExecuteScalarAsync<long>(
+            "sp_SaveMessage",
+            new
+            {
+                ConversationId = conversationId,
+                SenderId = senderId,
+                Body = body,
+                ContentType = contentType,
+                MediaUrl = mediaUrl
+            },
+            commandType: CommandType.StoredProcedure
+        );
+    }
+
+    // ----------------------------
+    // Contacts
+    // ----------------------------
+    public async Task<IEnumerable<ContactDto>> GetContactsAsync(Guid userId)
+    {
+        using var con = _ctx.CreateConnection();
+        return await con.QueryAsync<ContactDto>(
+            "sp_GetContactsByUserId",
+            new { UserId = userId },
+            commandType: CommandType.StoredProcedure);
+    }
+
+    // ----------------------------
+    // Chat History
+    // ----------------------------
+    public async Task<IEnumerable<Application.DTOs.Chat.MessageWithStatusDto>> GetMessagesWithStatusAsync(Guid conversationId, Guid userId, int page, int pageSize)
+    {
+        using var con = _ctx.CreateConnection();
+        return await con.QueryAsync<Application.DTOs.Chat.MessageWithStatusDto>(
+            "sp_GetMessagesWithStatus",
+            new { ConversationId = conversationId, UserId = userId, Page = page, PageSize = pageSize },
+            commandType: CommandType.StoredProcedure);
+    }
+
+    // ----------------------------
+    // Mark Messages Read + return affected senders
+    // ----------------------------
+    public async Task<IEnumerable<Guid>> MarkMessagesAsReadAsync(Guid conversationId, Guid userId, long lastReadMessageId)
+    {
+        using var con = _ctx.CreateConnection();
+
+        return await con.QueryAsync<Guid>(
+            "sp_MarkMessagesAsRead",
+            new
+            {
+                ConversationId = conversationId,
+                UserId = userId,
+                LastReadMessageId = lastReadMessageId
+            },
+            commandType: CommandType.StoredProcedure);
+    }
+
+    // ----------------------------
+    // Group Management
+    // ----------------------------
+    public async Task<(Guid ConversationId, string? ErrorMessage)> CreateGroupAsync(Guid creatorUserId, string groupName, string? groupPhotoUrl, List<Guid> memberUserIds)
+    {
+        using var con = _ctx.CreateConnection();
+
+        var p = new DynamicParameters();
+        p.Add("@CreatorUserId", creatorUserId);
+        p.Add("@GroupName", groupName);
+        p.Add("@GroupPhotoUrl", groupPhotoUrl);
+        p.Add("@MemberUserIds", string.Join(",", memberUserIds));
+        p.Add("@ConversationId", dbType: DbType.Guid, direction: ParameterDirection.Output);
+        p.Add("@ErrorMessage", dbType: DbType.String, size: 500, direction: ParameterDirection.Output);
+
+        await con.ExecuteAsync("sp_CreateGroup", p, commandType: CommandType.StoredProcedure);
+
+        return (
+            p.Get<Guid>("@ConversationId"),
+            p.Get<string?>("@ErrorMessage")
+        );
+    }
+
+    public async Task<GroupDetailsDto?> GetGroupDetailsAsync(Guid conversationId, Guid userId)
+    {
+        using var con = _ctx.CreateConnection();
+
+        using var multi = await con.QueryMultipleAsync(
+            "sp_GetGroupDetails",
+            new { ConversationId = conversationId, UserId = userId },
+            commandType: CommandType.StoredProcedure);
+
+        var groupInfo = await multi.ReadFirstOrDefaultAsync<dynamic>();
+        if (groupInfo == null) return null;
+
+        var members = (await multi.ReadAsync<Application.DTOs.Group.GroupMemberDto>()).ToList();
+
+        return new GroupDetailsDto(
+            groupInfo.ConversationId,
+            groupInfo.GroupName,
+            groupInfo.GroupPhotoUrl,
+            groupInfo.CreatedBy,
+            groupInfo.CreatorDisplayName,
+            groupInfo.CreatedAtUtc,
+            members
+        );
+    }
+
+    public async Task<string?> AddGroupMemberAsync(Guid conversationId, Guid userId, Guid addedBy)
+    {
+        using var con = _ctx.CreateConnection();
+
+        var p = new DynamicParameters();
+        p.Add("@ConversationId", conversationId);
+        p.Add("@UserId", userId);
+        p.Add("@AddedBy", addedBy);
+        p.Add("@ErrorMessage", dbType: DbType.String, direction: ParameterDirection.Output, size: 500);
+
+        await con.ExecuteAsync("sp_AddGroupMember", p, commandType: CommandType.StoredProcedure);
+        return p.Get<string?>("@ErrorMessage");
+    }
+
+    public async Task<string?> RemoveGroupMemberAsync(Guid conversationId, Guid userId, Guid removedBy)
+    {
+        using var con = _ctx.CreateConnection();
+
+        var p = new DynamicParameters();
+        p.Add("@ConversationId", conversationId);
+        p.Add("@UserId", userId);
+        p.Add("@RemovedBy", removedBy);
+        p.Add("@ErrorMessage", dbType: DbType.String, direction: ParameterDirection.Output, size: 500);
+
+        await con.ExecuteAsync("sp_RemoveGroupMember", p, commandType: CommandType.StoredProcedure);
+        return p.Get<string?>("@ErrorMessage");
+    }
+
+    public async Task<string?> LeaveGroupAsync(Guid conversationId, Guid userId)
+    {
+        using var con = _ctx.CreateConnection();
+
+        var p = new DynamicParameters();
+        p.Add("@ConversationId", conversationId);
+        p.Add("@UserId", userId);
+        p.Add("@ErrorMessage", dbType: DbType.String, direction: ParameterDirection.Output, size: 500);
+
+        await con.ExecuteAsync("sp_LeaveGroup", p, commandType: CommandType.StoredProcedure);
+        return p.Get<string?>("@ErrorMessage");
+    }
+
+    public async Task<bool> IsUserAdminAsync(Guid conversationId, Guid userId)
+    {
+        using var con = _ctx.CreateConnection();
+        var result = await con.ExecuteScalarAsync<int>(
+            "sp_IsUserAdmin",
+            new { ConversationId = conversationId, UserId = userId },
+            commandType: CommandType.StoredProcedure);
+
+        return result == 1;
+    }
+
+    public async Task<IEnumerable<UserDto>> GetGroupMembersAsync(Guid conversationId)
+    {
+        using var con = _ctx.CreateConnection();
+        var members = await con.QueryAsync<UserDto>(
+          @"SELECT u.UserId, u.DisplayName, u.UserName, u.ProfilePhotoUrl
+        FROM ConversationMembers cm
+        JOIN Users u ON cm.UserId = u.UserId
+        WHERE cm.ConversationId = @ConversationId
+        ORDER BY cm.AddedAtUtc",
+          new { ConversationId = conversationId });
+        return members;
+    }
+
+    public async Task<string?> TransferAdminAsync(Guid conversationId, Guid oldAdminId, Guid newAdminId)
+    {
+        using var con = _ctx.CreateConnection();
+        var p = new DynamicParameters();
+        p.Add("@ConversationId", conversationId);
+        p.Add("@OldAdminId", oldAdminId);
+        p.Add("@NewAdminId", newAdminId);
+        p.Add("@ErrorMessage", dbType: DbType.String, direction: ParameterDirection.Output, size: 500);
+
+        await con.ExecuteAsync("sp_TransferAdmin", p, commandType: CommandType.StoredProcedure);
+        return p.Get<string?>("@ErrorMessage");
+    }
+
+
+
+
+
+    public async Task<string?> UpdateGroupInfoAsync(Guid conversationId, Guid userId, string? groupName, string? groupPhotoUrl)
+    {
+        using var con = _ctx.CreateConnection();
+
+        var p = new DynamicParameters();
+        p.Add("@ConversationId", conversationId);
+        p.Add("@UserId", userId);
+        p.Add("@GroupName", groupName);
+        p.Add("@GroupPhotoUrl", groupPhotoUrl);
+        p.Add("@ErrorMessage", dbType: DbType.String, direction: ParameterDirection.Output, size: 500);
+
+        await con.ExecuteAsync("sp_UpdateGroupInfo", p, commandType: CommandType.StoredProcedure);
+        return p.Get<string?>("@ErrorMessage");
+    }
+
+    // ----------------------------
+    // Message Status
+    // ----------------------------
+    public async Task UpdateMessageStatusAsync(long messageId, Guid userId, string status)
+    {
+        using var con = _ctx.CreateConnection();
+        await con.ExecuteAsync(
+            "sp_UpdateMessageStatus",
+            new { MessageId = messageId, UserId = userId, Status = status },
+            commandType: CommandType.StoredProcedure);
+    }
+
+    public async Task<Guid?> GetSenderIdByMessageIdAsync(long messageId)
+    {
+        using var con = _ctx.CreateConnection();
+        return await con.ExecuteScalarAsync<Guid?>(
+            "SELECT SenderId FROM Messages WHERE MessageId = @MessageId",
+            new { MessageId = messageId });
+    }
+
+    public async Task<IEnumerable<Application.DTOs.Chat.MessageStatusDto>> GetMessageStatusAsync(long messageId)
+    {
+        using var con = _ctx.CreateConnection();
+        return await con.QueryAsync<Application.DTOs.Chat.MessageStatusDto>(
+            "sp_GetMessageStatus",
+            new { MessageId = messageId },
+            commandType: CommandType.StoredProcedure);
+    }
+
+    // Add to ChatApp.Infrastructure/Repositories/ChatRepository.cs
+
+    public async Task<string?> DeleteMessageAsync(long messageId, Guid userId, bool deleteForEveryone)
+    {
+        using var con = _ctx.CreateConnection();
+
+        var p = new DynamicParameters();
+        p.Add("@MessageId", messageId);
+        p.Add("@UserId", userId);
+        p.Add("@DeleteForEveryone", deleteForEveryone);
+
+        var result = await con.QueryFirstOrDefaultAsync<string>(
+            "sp_DeleteMessage",
+            p,
+            commandType: CommandType.StoredProcedure);
+
+        return result;
+    }
+
+    public async Task<string?> EditMessageAsync(long messageId, Guid userId, string newBody)
+    {
+        using var con = _ctx.CreateConnection();
+
+        var result = await con.QueryFirstOrDefaultAsync<string>(
+            "sp_EditMessage",
+            new { MessageId = messageId, UserId = userId, NewBody = newBody },
+            commandType: CommandType.StoredProcedure);
+
+        return result;
+    }
+
+    public async Task<(long? MessageId, string? ErrorMessage)> ForwardMessageAsync(long originalMessageId, Guid forwardedBy, Guid targetConversationId)
+    {
+        using var con = _ctx.CreateConnection();
+
+        var result = await con.QueryFirstOrDefaultAsync<dynamic>(
+            "sp_ForwardMessage",
+            new
+            {
+                OriginalMessageId = originalMessageId,
+                ForwardedBy = forwardedBy,
+                TargetConversationId = targetConversationId
+            },
+            commandType: CommandType.StoredProcedure);
+
+        if (result == null)
+            return (null, "Failed to forward message");
+
+        return ((long?)result.MessageId, (string?)result.ErrorMessage);
+    }
+
+    public async Task<Guid> GetConversationIdByMessageIdAsync(long messageId)
+    {
+        using var con = _ctx.CreateConnection();
+        return await con.ExecuteScalarAsync<Guid>(
+            "SELECT ConversationId FROM Messages WHERE MessageId = @MessageId",
+            new { MessageId = messageId });
+    }
+
+    public async Task<List<Guid>> GetConversationMembersAsync(Guid conversationId)
+    {
+        using var con = _ctx.CreateConnection();
+        var members = await con.QueryAsync<Guid>(
+            "SELECT UserId FROM ConversationMembers WHERE ConversationId = @ConversationId",
+            new { ConversationId = conversationId });
+        return members.ToList();
+    }
+
+    public async Task<(IEnumerable<SearchResultDto> Results, int TotalCount)> SearchMessagesAsync(
+    Guid userId,
+    string query,
+    Guid? senderId,
+    Guid? conversationId,
+    DateTime? startDate,
+    DateTime? endDate,
+    int page,
+    int pageSize)
+    {
+        using var con = _ctx.CreateConnection();
+
+        using var multi = await con.QueryMultipleAsync(
+            "sp_SearchMessages",
+            new
+            {
+                UserId = userId,
+                Query = query,
+                SenderId = senderId,
+                ConversationId = conversationId,
+                StartDate = startDate,
+                EndDate = endDate,
+                Page = page,
+                PageSize = pageSize
+            },
+            commandType: CommandType.StoredProcedure
+        );
+
+        var results = (await multi.ReadAsync<SearchResultDto>()).ToList();
+        var totalCount = await multi.ReadFirstAsync<int>();
+
+        return (results, totalCount);
+    }
+
+
+}

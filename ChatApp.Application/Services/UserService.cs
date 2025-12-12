@@ -1,5 +1,6 @@
-﻿using ChatApp.Domain.Users;
-using ChatApp.Infrastructure.Repositories;
+﻿using ChatApp.Application.DTOs.User;
+using ChatApp.Application.Interfaces.IRepositories;
+using ChatApp.Domain.ValueObjects;
 
 namespace ChatApp.Application.Services;
 
@@ -15,7 +16,7 @@ public class UserService : IUserService
     public async Task<UserProfileDto?> GetUserProfileAsync(Guid userId)
         => await _users.GetUserProfileAsync(userId);
 
-    public async Task<OtherUserProfileDto?> GetUserProfileByIdAsync(Guid userId, Guid viewerId)
+    public async Task<DTOs.User.OtherUserProfileDto?> GetUserProfileByIdAsync(Guid userId, Guid viewerId)
         => await _users.GetUserProfileByIdAsync(userId, viewerId);
 
     // Updated - removed profilePhotoUrl parameter

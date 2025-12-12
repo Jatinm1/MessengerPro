@@ -1,318 +1,218 @@
-﻿using ChatApp.Api.SignalR;
-using ChatApp.Application.Services;
-using ChatApp.Domain.Chat;
-using ChatApp.Domain.Users;
-using ChatApp.Infrastructure.Repositories;
+﻿using ChatApp.Application.DTOs.Chat;
+using ChatApp.Application.Interfaces.IRepositories;
+using ChatApp.Application.Interfaces.IServices;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.SignalR;
 using System.Security.Claims;
 
 namespace ChatApp.Api.Controllers;
 
 [ApiController]
-[Route("api/chat")]
+[Route("api/[controller]")]
 [Authorize]
 public class ChatController : ControllerBase
 {
     private readonly IChatService _chatService;
-    private readonly IUserRepository _users;
     private readonly ICloudinaryService _cloudinaryService;
-    private readonly IHubContext<ChatHub> _hub;
+    private readonly IGroupService _groupService;
+    private readonly IUserRepository _userRepository;
 
-    public ChatController(IChatService chatService, IUserRepository userRepository, ICloudinaryService cloudinaryService, IHubContext<ChatHub> hub)
+    /// <summary>
+    /// Initializes a new instance of the ChatController with required services.
+    /// </summary>
+    public ChatController(
+        IChatService chatService,
+        ICloudinaryService cloudinaryService,
+        IGroupService groupService,
+        IUserRepository userRepository)
     {
         _chatService = chatService;
-        _users = userRepository;
         _cloudinaryService = cloudinaryService;
-        _hub = hub;
+        _groupService = groupService;
+        _userRepository = userRepository;
     }
 
-    private Guid CurrentUserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier) ??
-                                             User.FindFirstValue("sub")!);
+    /// <summary>
+    /// Gets the current user's ID from the JWT token claims.
+    /// Returns either 'NameIdentifier' or 'sub' claim value as a Guid.
+    /// </summary>
+    private Guid CurrentUserId => Guid.Parse(
+        User.FindFirstValue(ClaimTypes.NameIdentifier) ??
+        User.FindFirstValue("sub")!);
 
+    /// <summary>
+    /// Retrieves all contacts for the current user (users they've interacted with).
+    /// </summary>
     [HttpGet("contacts")]
     public async Task<IActionResult> GetContacts()
     {
-        var result = await _chatService.GetContactsAsync(CurrentUserId);
-        return Ok(result);
+        var contacts = await _chatService.GetContactsAsync(CurrentUserId);
+        return Ok(contacts);
     }
 
-    [HttpGet("history/{conversationId}")]
-    public async Task<IActionResult> GetChatHistory(Guid conversationId, int page = 1, int pageSize = 20)
-    {
-        var result = await _chatService.GetChatHistoryAsync(conversationId, CurrentUserId, page, pageSize);
-        return Ok(result);
-    }
-
+    /// <summary>
+    /// Retrieves all registered users in the system.
+    /// </summary>
     [HttpGet("all-users")]
     public async Task<IActionResult> GetAllUsers()
     {
-        var result = await _users.GetAllUsersAsync();
-        return Ok(result);
+        var users = await _userRepository.GetAllUsersAsync();
+        return Ok(users);
     }
 
-    [HttpGet("create-conversation")]
-    public async Task<IActionResult> CreateConversation(Guid userId)
+    /// <summary>
+    /// Retrieves chat history for a specific conversation with pagination support.
+    /// </summary>
+    [HttpGet("history/{conversationId}")]
+    public async Task<IActionResult> GetChatHistory(
+        Guid conversationId,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20)
     {
-        var convId = await _chatService.GetOrCreateConversationAsync(CurrentUserId, userId);
-        return Ok(new { conversationId = convId });
+        var messages = await _chatService.GetChatHistoryAsync(conversationId, CurrentUserId, page, pageSize);
+        return Ok(messages);
     }
 
-    [HttpPost("mark-as-read/{conversationId}")]
-    public async Task<IActionResult> MarkAsRead(Guid conversationId, [FromBody] long lastReadMessageId)
+    /// <summary>
+    /// Gets or creates a one-on-one conversation between current user and another user.
+    /// </summary>
+    [HttpGet("conversation/{userId}")]
+    public async Task<IActionResult> GetOrCreateConversation(Guid userId)
     {
-        await _chatService.MarkMessagesAsReadAsync(conversationId, CurrentUserId, lastReadMessageId);
-        return Ok();
-    }
-
-    // ========================================
-    // GROUP ENDPOINTS
-    // ========================================
-
-    [HttpPost("group/create")]
-    public async Task<IActionResult> CreateGroup([FromBody] CreateGroupRequest request)
-    {
-        var (conversationId, errorMessage) = await _chatService.CreateGroupAsync(
-            CurrentUserId,
-            request.GroupName,
-            request.GroupPhotoUrl,
-            request.MemberUserIds
-        );
-
-        if (errorMessage != null)
-            return BadRequest(new { error = errorMessage });
-
+        var conversationId = await _chatService.GetOrCreateConversationAsync(CurrentUserId, userId);
         return Ok(new { conversationId });
     }
 
-    [HttpGet("group/{conversationId}")]
-    public async Task<IActionResult> GetGroupDetails(Guid conversationId)
+    /// <summary>
+    /// Marks all messages in a conversation as read up to a specific message ID.
+    /// </summary>
+    [HttpPost("mark-as-read/{conversationId}")]
+    public async Task<IActionResult> MarkAsRead(
+        Guid conversationId,
+        [FromBody] MarkAsReadRequest request)
     {
-        var result = await _chatService.GetGroupDetailsAsync(conversationId, CurrentUserId);
-
-        if (result == null)
-            return NotFound(new { error = "Group not found or you're not a member" });
-
-        return Ok(result);
-    }
-
-    [HttpPost("group/{conversationId}/add-member")]
-    public async Task<IActionResult> AddGroupMember(Guid conversationId, [FromBody] AddGroupMemberRequest request)
-    {
-        var errorMessage = await _chatService.AddGroupMemberAsync(conversationId, request.UserId, CurrentUserId);
-
-        if (errorMessage != null)
-            return BadRequest(new { error = errorMessage });
-
-        return Ok(new { message = "Member added successfully" });
-    }
-
-    [HttpPost("group/{conversationId}/remove-member")]
-    public async Task<IActionResult> RemoveGroupMember(Guid conversationId, [FromBody] RemoveGroupMemberRequest request)
-    {
-        var errorMessage = await _chatService.RemoveGroupMemberAsync(conversationId, request.UserId, CurrentUserId);
-
-        if (errorMessage != null)
-            return BadRequest(new { error = errorMessage });
-
-        return Ok(new { message = "Member removed successfully" });
-    }
-
-    [HttpPost("group/{conversationId}/leave")]
-    public async Task<IActionResult> LeaveGroup(Guid conversationId)
-    {
-        var error = await _chatService.LeaveGroupAsync(conversationId, CurrentUserId);
-        if (error != null)
-            return BadRequest(new { error });
-
-        // 🔥 Notify via SignalR (user-side removal)
-        await _hub.Clients.Group($"user:{CurrentUserId}").SendAsync("groupLeft", new
-        {
-            conversationId = conversationId
-        });
-
-        return Ok(new { message = "Left group successfully" });
-    }
-
-
-
-
-    // GET: /api/chat/group/{conversationId}/is-admin
-    [HttpGet("group/{conversationId}/is-admin")]
-    public async Task<IActionResult> IsUserAdmin(Guid conversationId)
-    {
-        var isAdmin = await _chatService.IsUserAdminAsync(conversationId, CurrentUserId);
-        return Ok(new { isAdmin });
-    }
-
-
-    // POST: /api/chat/group/{conversationId}/transfer-admin
-    [HttpPost("group/{conversationId}/transfer-admin")]
-    public async Task<IActionResult> TransferAdmin(Guid conversationId, [FromBody] TransferAdminDto dto)
-    {
-        var error = await _chatService.TransferAdminAsync(conversationId, CurrentUserId, dto.NewAdminId);
-        if (error != null) return BadRequest(new { error });
-        return Ok(new { message = "Admin transferred successfully" });
-    }
-
-
-
-
-    [HttpPut("group/{conversationId}")]
-    public async Task<IActionResult> UpdateGroupInfo(Guid conversationId, [FromBody] UpdateGroupInfoRequest request)
-    {
-        var errorMessage = await _chatService.UpdateGroupInfoAsync(
+        await _chatService.MarkMessagesAsReadAsync(
             conversationId,
             CurrentUserId,
-            request.GroupName,
-            request.GroupPhotoUrl
-        );
+            request.LastReadMessageId);
 
-        if (errorMessage != null)
-            return BadRequest(new { error = errorMessage });
-
-        return Ok(new { message = "Group updated successfully" });
-    }
-
-    // ========================================
-    // MESSAGE STATUS ENDPOINTS
-    // ========================================
-
-    [HttpPost("message/{messageId}/status")]
-    public async Task<IActionResult> UpdateMessageStatus(long messageId, [FromBody] string status)
-    {
-        await _chatService.UpdateMessageStatusAsync(messageId, CurrentUserId, status);
         return Ok();
     }
 
+    /// <summary>
+    /// Updates the delivery status of a specific message (sent, delivered, read).
+    /// </summary>
+    [HttpPost("message/{messageId}/status")]
+    public async Task<IActionResult> UpdateMessageStatus(
+        long messageId,
+        [FromBody] UpdateMessageStatusRequest request)
+    {
+        await _chatService.UpdateMessageStatusAsync(messageId, CurrentUserId, request.Status);
+        return Ok();
+    }
+
+    /// <summary>
+    /// Retrieves the delivery status for all recipients of a specific message.
+    /// </summary>
     [HttpGet("message/{messageId}/status")]
     public async Task<IActionResult> GetMessageStatus(long messageId)
     {
-        var result = await _chatService.GetMessageStatusAsync(messageId);
-        return Ok(result);
+        var statuses = await _chatService.GetMessageStatusAsync(messageId);
+        return Ok(statuses);
     }
 
-    // Add these methods to your existing ChatController
-
-    [HttpPost("group/{conversationId}/photo")]
-    [RequestSizeLimit(10_000_000)] // 10MB limit
-    public async Task<IActionResult> UploadGroupPhoto(Guid conversationId, IFormFile file)
-    {
-        if (file == null || file.Length == 0)
-            return BadRequest(new { error = "No file uploaded" });
-
-        // Validate file type
-        var allowedTypes = new[] { "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp" };
-        if (!allowedTypes.Contains(file.ContentType.ToLower()))
-            return BadRequest(new { error = "Invalid file type. Only images are allowed." });
-
-        // Validate file size (10MB)
-        if (file.Length > 10_000_000)
-            return BadRequest(new { error = "File size must be less than 10MB" });
-
-        // Verify user is admin of the group
-        var groupDetails = await _chatService.GetGroupDetailsAsync(conversationId, CurrentUserId);
-        if (groupDetails == null)
-            return NotFound(new { error = "Group not found or you're not a member" });
-
-        var isAdmin = groupDetails.Members.Any(m => m.UserId == CurrentUserId && m.IsAdmin);
-        if (!isAdmin)
-            return Forbid();
-
-        try
-        {
-            using var stream = file.OpenReadStream();
-            var (url, publicId, error) = await _cloudinaryService.UploadImageAsync(stream, file.FileName);
-
-            if (error != null)
-                return BadRequest(new { error = $"Upload failed: {error}" });
-
-            // Update group photo
-            await _chatService.UpdateGroupInfoAsync(conversationId, CurrentUserId, null, url);
-
-            return Ok(new { url, publicId });
-        }
-        catch (Exception ex)
-        {
-            return StatusCode(500, new { error = $"Upload failed: {ex.Message}" });
-        }
-    }
-
-    // Add to ChatApp.Api/Controllers/ChatController.cs
-
+    /// <summary>
+    /// Deletes a message either for current user only or for all participants.
+    /// </summary>
     [HttpPost("message/{messageId}/delete")]
-    public async Task<IActionResult> DeleteMessage(long messageId, [FromBody] DeleteMessageRequest request)
+    public async Task<IActionResult> DeleteMessage(
+        long messageId,
+        [FromBody] DeleteMessageRequest request)
     {
-        var error = await _chatService.DeleteMessageAsync(messageId, CurrentUserId, request.DeleteForEveryone);
+        var result = await _chatService.DeleteMessageAsync(
+            messageId,
+            CurrentUserId,
+            request.DeleteForEveryone);
 
-        if (error != null)
-            return BadRequest(new { error });
-
-        // Get conversation details for SignalR notification
-        var conversationId = await _chatService.GetConversationIdByMessageIdAsync(messageId);
-        var members = await _chatService.GetConversationMembersAsync(conversationId);
-
-        // Notify all members
-        foreach (var memberId in members)
-        {
-            await _hub.Clients.Group($"user:{memberId}").SendAsync("messageDeleted", new
-            {
-                messageId = messageId,
-                conversationId = conversationId,
-                deletedBy = CurrentUserId,
-                deleteForEveryone = request.DeleteForEveryone
-            });
-        }
+        if (!string.IsNullOrEmpty(result))
+            return BadRequest(new { error = result });
 
         return Ok(new { message = "Message deleted successfully" });
     }
 
+    /// <summary>
+    /// Edits the content of an existing message (only if user is the sender).
+    /// </summary>
     [HttpPut("message/{messageId}/edit")]
-    public async Task<IActionResult> EditMessage(long messageId, [FromBody] EditMessageRequest request)
+    public async Task<IActionResult> EditMessage(
+        long messageId,
+        [FromBody] EditMessageRequest request)
     {
-        var error = await _chatService.EditMessageAsync(messageId, CurrentUserId, request.NewBody);
+        var result = await _chatService.EditMessageAsync(messageId, CurrentUserId, request.NewBody);
 
-        if (error != null)
-            return BadRequest(new { error });
-
-        // Get conversation details for SignalR notification
-        var conversationId = await _chatService.GetConversationIdByMessageIdAsync(messageId);
-        var members = await _chatService.GetConversationMembersAsync(conversationId);
-
-        // Notify all members
-        foreach (var memberId in members)
-        {
-            await _hub.Clients.Group($"user:{memberId}").SendAsync("messageEdited", new
-            {
-                messageId = messageId,
-                conversationId = conversationId,
-                newBody = request.NewBody,
-                editedBy = CurrentUserId,
-                editedAtUtc = DateTime.UtcNow
-            });
-        }
+        if (!string.IsNullOrEmpty(result))
+            return BadRequest(new { error = result });
 
         return Ok(new { message = "Message edited successfully" });
     }
 
+    /// <summary>
+    /// Forwards a message to another conversation.
+    /// </summary>
     [HttpPost("message/{messageId}/forward")]
-    public async Task<IActionResult> ForwardMessage(long messageId, [FromBody] ForwardMessageRequest request)
+    public async Task<IActionResult> ForwardMessage(
+        long messageId,
+        [FromBody] ForwardMessageRequest request)
     {
-        var (newMessageId, error) = await _chatService.ForwardMessageAsync(
+        var (newMessageId, errorMessage) = await _chatService.ForwardMessageAsync(
             messageId,
             CurrentUserId,
-            request.TargetConversationId
-        );
+            request.TargetConversationId);
 
-        if (error != null)
-            return BadRequest(new { error });
+        if (!string.IsNullOrEmpty(errorMessage))
+            return BadRequest(new { error = errorMessage });
 
         return Ok(new { messageId = newMessageId, message = "Message forwarded successfully" });
     }
 
+    /// <summary>
+    /// Searches messages with optional filters.
+    /// </summary>
+    [HttpGet("search")]
+    public async Task<IActionResult> SearchMessages(
+        [FromQuery] string query,
+        [FromQuery] Guid? senderId,
+        [FromQuery] Guid? conversationId,
+        [FromQuery] DateTime? startDate,
+        [FromQuery] DateTime? endDate,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return BadRequest(new { error = "Query parameter is required" });
+        }
+
+        var result = await _chatService.SearchMessagesAsync(
+            CurrentUserId,
+            query,
+            senderId,
+            conversationId,
+            startDate,
+            endDate,
+            page,
+            pageSize
+        );
+
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Uploads a media file (image or video) to cloud storage.
+    /// Maximum sizes: 10MB for images, 50MB for videos.
+    /// </summary>
     [HttpPost("upload/media")]
-    [RequestSizeLimit(50_000_000)] // 50MB limit
+    [RequestSizeLimit(50_000_000)]
     public async Task<IActionResult> UploadMedia(IFormFile file)
     {
         if (file == null || file.Length == 0)
@@ -325,8 +225,7 @@ public class ChatController : ControllerBase
         if (!isImage && !isVideo)
             return BadRequest(new { error = "Only images and videos are allowed" });
 
-        // Validate file size
-        var maxSize = isImage ? 10_000_000 : 50_000_000; // 10MB for images, 50MB for videos
+        var maxSize = isImage ? 10_000_000 : 50_000_000;
         if (file.Length > maxSize)
             return BadRequest(new { error = $"File size must be less than {maxSize / 1_000_000}MB" });
 
@@ -353,4 +252,48 @@ public class ChatController : ControllerBase
             return StatusCode(500, new { error = $"Upload failed: {ex.Message}" });
         }
     }
+}
+
+
+
+// DTOs for request bodies
+
+/// <summary>
+/// Request model for marking messages as read up to a specific message ID.
+/// </summary>
+public class MarkAsReadRequest
+{
+    public long LastReadMessageId { get; set; }
+}
+
+/// <summary>
+/// Request model for updating a message's delivery status.
+/// </summary>
+public class UpdateMessageStatusRequest
+{
+    public string Status { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Request model for deleting a message (either for sender only or for all).
+/// </summary>
+public class DeleteMessageRequest
+{
+    public bool DeleteForEveryone { get; set; }
+}
+
+/// <summary>
+/// Request model for editing a message's content.
+/// </summary>
+public class EditMessageRequest
+{
+    public string NewBody { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Request model for forwarding a message to another conversation.
+/// </summary>
+public class ForwardMessageRequest
+{
+    public Guid TargetConversationId { get; set; }
 }

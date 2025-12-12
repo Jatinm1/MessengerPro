@@ -1,5 +1,7 @@
-﻿using ChatApp.Application.Services;
-using ChatApp.Domain.Users;
+﻿using ChatApp.Application.DTOs.User;
+using ChatApp.Application.Interfaces.IServices;
+using ChatApp.Application.Services;
+using ChatApp.Domain.ValueObjects;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -14,18 +16,27 @@ public class UserController : ControllerBase
     private readonly IUserService _userService;
     private readonly ICloudinaryService _cloudinaryService;
 
+    /// <summary>
+    /// Initializes a new instance of the UserController with user profile services.
+    /// </summary>
     public UserController(IUserService userService, ICloudinaryService cloudinaryService)
     {
         _userService = userService;
         _cloudinaryService = cloudinaryService;
     }
 
+    /// <summary>
+    /// Gets the current user's ID from the JWT token claims.
+    /// Returns either 'NameIdentifier' or 'sub' claim value as a Guid.
+    /// </summary>
     private Guid CurrentUserId => Guid.Parse(
         User.FindFirstValue(ClaimTypes.NameIdentifier) ??
         User.FindFirstValue("sub")!
     );
 
-    // GET: api/user/profile
+    /// <summary>
+    /// Retrieves the current user's complete profile information.
+    /// </summary>
     [HttpGet("profile")]
     public async Task<IActionResult> GetMyProfile()
     {
@@ -36,7 +47,9 @@ public class UserController : ControllerBase
         return Ok(profile);
     }
 
-    // GET: api/user/profile/{userId}
+    /// <summary>
+    /// Retrieves another user's public profile information.
+    /// </summary>
     [HttpGet("profile/{userId}")]
     public async Task<IActionResult> GetUserProfile(Guid userId)
     {
@@ -47,7 +60,10 @@ public class UserController : ControllerBase
         return Ok(profile);
     }
 
-    // PUT: api/user/profile (NO PHOTO UPDATE)
+    /// <summary>
+    /// Updates the current user's profile information (display name and bio).
+    /// Does not handle profile photo updates.
+    /// </summary>
     [HttpPut("profile")]
     public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileRequest request)
     {
@@ -60,7 +76,10 @@ public class UserController : ControllerBase
         return Ok(new { message = "Profile updated successfully" });
     }
 
-    // POST: api/user/profile/photo
+    /// <summary>
+    /// Uploads and sets a new profile photo for the current user.
+    /// Maximum file size: 10MB. Allowed types: JPEG, PNG, GIF, WebP.
+    /// </summary>
     [HttpPost("profile/photo")]
     [RequestSizeLimit(10_000_000)]
     public async Task<IActionResult> UploadProfilePhoto(IFormFile file)
@@ -81,7 +100,7 @@ public class UserController : ControllerBase
             if (error != null)
                 return BadRequest(new { error = $"Upload failed: {error}" });
 
-            // Only update profile photo
+            // Update user's profile photo in database
             await _userService.UpdateProfilePhotoAsync(CurrentUserId, url);
 
             return Ok(new { url, publicId });

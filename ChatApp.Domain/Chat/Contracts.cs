@@ -9,23 +9,6 @@ public class IncomingMessageDto
     public string Body { get; set; } = string.Empty;
     public DateTime CreatedAtUtc { get; set; }
 }
-public record ContactDto(
-    Guid ConversationId,
-    bool IsGroup,
-    Guid? UserId,
-    string UserName,
-    string DisplayName,
-    string? PhotoUrl,
-    bool IsOnline,
-    DateTime? LastSeenUtc,
-    DateTime? LastMessageTime,
-    string? LastMessage,
-    int UnreadCount
-);
 
 
-public record UserDto(
-    Guid UserId,
-    string UserName,
-    string DisplayName,
-    DateTime CreatedAtUtc);
+
