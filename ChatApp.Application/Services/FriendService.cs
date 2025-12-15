@@ -1,4 +1,5 @@
-﻿using ChatApp.Application.Interfaces.IRepositories;
+﻿
+using ChatApp.Application.Interfaces.IRepositories;
 using ChatApp.Domain.Entities;
 
 namespace ChatApp.Application.Services;
