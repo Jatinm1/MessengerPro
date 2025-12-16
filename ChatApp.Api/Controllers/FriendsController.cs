@@ -84,26 +84,60 @@ public class FriendsController : ControllerBase
     [HttpPost("requests/{requestId}/accept")]
     public async Task<IActionResult> AcceptRequest(long requestId)
     {
-        var userId = CurrentUserId;
+        var receiverId = CurrentUserId;
 
+        // 1️⃣ Get request BEFORE accepting (to know sender)
+        var receivedRequests =
+            await _friendService.GetReceivedRequestsAsync(receiverId);
+
+        var request =
+            receivedRequests.FirstOrDefault(r => r.RequestId == requestId);
+
+        if (request == null)
+            return BadRequest(new { error = "Request not found" });
+
+        var senderId = request.SenderId;
+
+        // 2️⃣ Accept request
         var (success, errorMessage) =
-            await _friendService.AcceptFriendRequestAsync(requestId, userId);
+            await _friendService.AcceptFriendRequestAsync(requestId, receiverId);
 
         if (!success)
             return BadRequest(new { error = errorMessage });
 
+        // ============================
         // 🔔 REALTIME UPDATES
-        var friends = await _friendService.GetFriendsListAsync(userId);
-        var received = await _friendService.GetReceivedRequestsAsync(userId);
+        // ============================
 
-        await _hubContext.Clients.Group($"user:{userId}")
-            .SendAsync("friendsListUpdated", friends);
+        // Receiver updates
+        var updatedReceived =
+            await _friendService.GetReceivedRequestsAsync(receiverId);
 
-        await _hubContext.Clients.Group($"user:{userId}")
-            .SendAsync("receivedRequestsUpdated", received);
+        var receiverFriends =
+            await _friendService.GetFriendsListAsync(receiverId);
+
+        await _hubContext.Clients.Group($"user:{receiverId}")
+            .SendAsync("receivedRequestsUpdated", updatedReceived);
+
+        await _hubContext.Clients.Group($"user:{receiverId}")
+            .SendAsync("friendsListUpdated", receiverFriends);
+
+        // Sender updates
+        var senderSent =
+            await _friendService.GetSentRequestsAsync(senderId);
+
+        var senderFriends =
+            await _friendService.GetFriendsListAsync(senderId);
+
+        await _hubContext.Clients.Group($"user:{senderId}")
+            .SendAsync("sentRequestsUpdated", senderSent);
+
+        await _hubContext.Clients.Group($"user:{senderId}")
+            .SendAsync("friendsListUpdated", senderFriends);
 
         return Ok(new { message = "Friend request accepted" });
     }
+
 
 
     /// <summary>
@@ -112,22 +146,48 @@ public class FriendsController : ControllerBase
     [HttpPost("requests/{requestId}/reject")]
     public async Task<IActionResult> RejectRequest(long requestId)
     {
-        var userId = CurrentUserId;
+        var receiverId = CurrentUserId;
 
+        // 1️⃣ Get request BEFORE rejecting (to know sender)
+        var receivedRequests =
+            await _friendService.GetReceivedRequestsAsync(receiverId);
+
+        var request =
+            receivedRequests.FirstOrDefault(r => r.RequestId == requestId);
+
+        if (request == null)
+            return BadRequest(new { error = "Request not found" });
+
+        var senderId = request.SenderId;
+
+        // 2️⃣ Reject request
         var (success, errorMessage) =
-            await _friendService.RejectFriendRequestAsync(requestId, userId);
+            await _friendService.RejectFriendRequestAsync(requestId, receiverId);
 
         if (!success)
             return BadRequest(new { error = errorMessage });
 
+        // ============================
         // 🔔 REALTIME UPDATES
-        var received = await _friendService.GetReceivedRequestsAsync(userId);
+        // ============================
 
-        await _hubContext.Clients.Group($"user:{userId}")
-            .SendAsync("receivedRequestsUpdated", received);
+        // Receiver: update received requests
+        var updatedReceived =
+            await _friendService.GetReceivedRequestsAsync(receiverId);
+
+        await _hubContext.Clients.Group($"user:{receiverId}")
+            .SendAsync("receivedRequestsUpdated", updatedReceived);
+
+        // Sender: update sent requests
+        var updatedSent =
+            await _friendService.GetSentRequestsAsync(senderId);
+
+        await _hubContext.Clients.Group($"user:{senderId}")
+            .SendAsync("sentRequestsUpdated", updatedSent);
 
         return Ok(new { message = "Friend request rejected" });
     }
+
 
 
     /// <summary>
