@@ -21,6 +21,12 @@ public class ChatHub : Hub
     private readonly IFriendService _friendService;
     private readonly IUserService _userService;
     private readonly IGroupService _groupService;
+    // =======================
+    // ACTIVE CALL TRACKING
+    // =======================
+    private static readonly ConcurrentDictionary<string, (Guid Caller, Guid Callee)>
+        _activeCalls = new();
+
 
     public ChatHub(
         IChatService chatService,
@@ -883,6 +889,169 @@ public class ChatHub : Hub
         Console.WriteLine($"❌ [FriendRequest] Rejected: Request {requestId} by {userId}");
     }
 
+    // Add these methods to your existing ChatHub.cs file
+
+    // ========================================
+    // WEBRTC CALLING METHODS
+    // ========================================
+
+    /// <summary>
+    /// Send a call offer to initiate a call
+    /// </summary>
+    public async Task SendCallOffer(
+        Guid conversationId,
+        Guid recipientId,
+        string callType,
+        object sdp)
+    {
+        var callerId = CurrentUserId;
+        var callId = $"call_{Guid.NewGuid()}";
+
+        // Get caller info
+        var caller = await _userRepository.GetByIdAsync(callerId);
+
+        // Check if recipient is online
+        if (!IsUserOnline(recipientId))
+        {
+            await Clients.Caller.SendAsync("callBusy", new { callId });
+            return;
+        }
+
+        // Check if recipient is already in a call (you can add a separate tracking for this)
+        // For simplicity, we'll send the offer
+
+        var offer = new
+        {
+            callId = callId,
+            conversationId = conversationId,
+            callType = callType,
+            from = new
+            {
+                userId = callerId,
+                userName = caller?.UserName ?? "Unknown",
+                displayName = caller?.DisplayName ?? "Unknown",
+                photoUrl = caller?.ProfilePhotoUrl
+            },
+            to = new
+            {
+                userId = recipientId
+            },
+            sdp = sdp
+        };
+
+        // Send offer to recipient
+        await Clients.Group($"user:{recipientId}").SendAsync("calloffer", offer);
+
+        Console.WriteLine($"📞 [Call] Offer sent from {caller?.UserName} to {recipientId}");
+    }
+
+    /// <summary>
+    /// Send a call answer to accept a call
+    /// </summary>
+    public async Task SendCallAnswer(string callId, object sdp)
+    {
+        var userId = CurrentUserId;
+
+        var answer = new
+        {
+            callId = callId,
+            sdp = sdp
+        };
+
+        // Send answer to all connections (caller will receive it)
+        await Clients.Others.SendAsync("callanswer", answer);
+
+        Console.WriteLine($"✅ [Call] Answer sent for call {callId} by {userId}");
+    }
+
+    /// <summary>
+    /// Send ICE candidate for WebRTC connection
+    /// </summary>
+    public async Task SendIceCandidate(string callId, object candidate)
+    {
+        var userId = CurrentUserId;
+
+        var iceCandidate = new
+        {
+            callId = callId,
+            candidate = candidate
+        };
+
+        // Send to all other participants
+        await Clients.Others.SendAsync("icecandidate", iceCandidate);
+
+        Console.WriteLine($"🧊 [Call] ICE candidate sent for call {callId}");
+    }
+
+    /// <summary>
+    /// Reject an incoming call
+    /// </summary>
+    public async Task RejectCall(string callId, string reason)
+    {
+        var userId = CurrentUserId;
+
+        await Clients.Others.SendAsync("callrejected", new
+        {
+            callId = callId,
+            reason = reason,
+            rejectedBy = userId
+        });
+
+        Console.WriteLine($"❌ [Call] Call {callId} rejected by {userId}");
+    }
+
+    /// <summary>
+    /// End an active call
+    /// </summary>
+    public async Task EndCall(string callId, string reason)
+    {
+        var userId = CurrentUserId;
+
+        await Clients.Others.SendAsync("callended", new
+        {
+            callId = callId,
+            endedBy = userId,
+            reason = reason
+        });
+
+        Console.WriteLine($"📴 [Call] Call {callId} ended by {userId}");
+    }
+
+    /// <summary>
+    /// Send call state update (mute, video off, screen share)
+    /// </summary>
+    public async Task SendCallStateUpdate(string callId, object stateUpdate)
+    {
+        var userId = CurrentUserId;
+
+        // Create a dynamic object with the state update
+        var update = new
+        {
+            callId = callId,
+            userId = userId,
+            isMuted = (stateUpdate as dynamic)?.isMuted,
+            isVideoOff = (stateUpdate as dynamic)?.isVideoOff,
+            isScreenSharing = (stateUpdate as dynamic)?.isScreenSharing
+        };
+
+        await Clients.Others.SendAsync("callstateupdate", update);
+
+        Console.WriteLine($"🔄 [Call] State update sent for call {callId} by {userId}");
+    }
+
+    /// <summary>
+    /// Send busy signal when user is already in a call
+    /// </summary>
+    public async Task SendBusySignal(string callId, Guid recipientId)
+    {
+        await Clients.Group($"user:{recipientId}").SendAsync("callbusy", new
+        {
+            callId = callId
+        });
+
+        Console.WriteLine($"📵 [Call] Busy signal sent for call {callId}");
+    }
+
     // ========================================
     // UTILITY METHODS
     // ========================================
@@ -900,4 +1069,18 @@ public class ChatHub : Hub
         }
         return 0;
     }
+
+    // ========================================
+    // CALL HELPERS
+    // ========================================
+    private Guid GetOtherParticipant(string callId)
+    {
+        if (!_activeCalls.TryGetValue(callId, out var call))
+            throw new HubException("Call not found");
+
+        return call.Caller == CurrentUserId
+            ? call.Callee
+            : call.Caller;
+    }
+
 }
