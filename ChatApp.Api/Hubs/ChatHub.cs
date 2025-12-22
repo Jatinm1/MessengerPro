@@ -1095,6 +1095,33 @@ public class ChatHub : Hub
         return 0;
     }
 
+    public async Task SendRenegotiationOffer(string callId, object offer)
+    {
+        var otherUserId = GetOtherParticipant(callId);
+
+        await Clients.User(otherUserId.ToString())
+            .SendAsync("renegotiationoffer", new
+            {
+                callId,
+                sdp = offer
+            });
+    }
+
+
+    public async Task SendRenegotiationAnswer(string callId, object answer)
+    {
+        var otherUserId = GetOtherParticipant(callId);
+
+        await Clients.User(otherUserId.ToString())
+            .SendAsync("renegotiationanswer", new
+            {
+                callId,
+                sdp = answer
+            });
+    }
+
+
+
     // ========================================
     // CALL HELPERS
     // ========================================
