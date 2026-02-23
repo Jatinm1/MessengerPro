@@ -15,6 +15,15 @@ using Microsoft.OpenApi.Models;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// ========================================
+// Railway Dynamic Port Binding
+// ========================================
+var port = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrEmpty(port))
+{
+    builder.WebHost.UseUrls($"http://*:{port}");
+}
 var cfg = builder.Configuration;
 
 // ========================================
@@ -205,7 +214,12 @@ app.UseSwaggerUI(c =>
 });
 
 // HTTPS Redirection
-if (!app.Environment.IsDevelopment())
+//if (!app.Environment.IsDevelopment())
+//{
+//    app.UseHttpsRedirection();
+//}
+
+if (app.Environment.IsDevelopment())
 {
     app.UseHttpsRedirection();
 }
