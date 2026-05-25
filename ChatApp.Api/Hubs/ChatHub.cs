@@ -1,7 +1,7 @@
 ﻿// ========================================
 // ChatApp.Api/Hubs/ChatHub.cs
 // ========================================
-using ChatApp.Application.DTOs.Call;
+using ChatApp.Application.DTOs.User;
 using ChatApp.Application.Interfaces.IRepositories;
 using ChatApp.Application.Interfaces.IServices;
 using Microsoft.AspNetCore.Authorization;
@@ -22,12 +22,6 @@ public class ChatHub : Hub
     private readonly IFriendService _friendService;
     private readonly IUserService _userService;
     private readonly IGroupService _groupService;
-    // =======================
-    // ACTIVE CALL TRACKING
-    // =======================
-    private static readonly ConcurrentDictionary<string, (Guid Caller, Guid Callee)>
-        _activeCalls = new();
-
 
     public ChatHub(
         IChatService chatService,
@@ -127,11 +121,16 @@ public class ChatHub : Hub
     // DIRECT MESSAGING
     // ========================================
 
-    public async Task SendDirect(Guid toUserId, string body, string? contentType = "text", string? mediaUrl = null)
+    // ChatHub.cs — SendDirect
+    public async Task SendDirect(
+        Guid toUserId,
+        string body,
+        string? contentType,
+        string? mediaUrl,
+        List<EncryptedKeyDto> encryptedKeys)   // ← new param
     {
         var fromUserId = CurrentUserId;
 
-        // Validate friendship
         var areFriends = await _friendService.AreFriendsAsync(fromUserId, toUserId);
         if (!areFriends)
         {
@@ -139,72 +138,92 @@ public class ChatHub : Hub
             return;
         }
 
-        // Validate message
         if (string.IsNullOrWhiteSpace(body) && string.IsNullOrWhiteSpace(mediaUrl))
         {
             await Clients.Caller.SendAsync("error", "Message cannot be empty");
             return;
         }
 
-        // Get or create conversation
         var conversationId = await _chatService.GetOrCreateConversationAsync(fromUserId, toUserId);
 
-        // Save message
         var messageId = await _chatService.SaveMessageAsync(
-            conversationId,
-            fromUserId,
-            body ?? mediaUrl ?? "",
-            contentType ?? "text",
-            mediaUrl);
+            conversationId, fromUserId, body, contentType ?? "text", mediaUrl);
 
-        // Get sender details
+        // Persist per-user encrypted AES keys
+        if (encryptedKeys?.Count > 0)
+            await _chatService.SaveMessageKeysAsync(messageId, encryptedKeys);
+
         var sender = await _userRepository.GetByIdAsync(fromUserId);
 
         var payload = new
         {
-            messageId = messageId,
-            conversationId = conversationId,
-            fromUserId = fromUserId,
+            messageId,
+            conversationId,
+            fromUserId,
             fromUserName = sender?.UserName ?? "Unknown",
             fromDisplayName = sender?.DisplayName ?? "Unknown",
-            body = body,
+            body,
             contentType = contentType ?? "text",
-            mediaUrl = mediaUrl,
+            mediaUrl,
             createdAtUtc = DateTime.UtcNow,
-            messageStatus = "Sent"
+            messageStatus = "Sent",
+            // Give each recipient only their own encrypted key slice
+            encryptedKey = encryptedKeys?.FirstOrDefault(k => k.UserId == toUserId)?.EncryptedKey
         };
 
-        // Send to receiver
         await Clients.Group($"user:{toUserId}").SendAsync("messageReceived", payload);
 
-        // Auto-mark as delivered if receiver is online
         if (_userConnections.ContainsKey(toUserId))
         {
             await _chatService.UpdateMessageStatusAsync(messageId, toUserId, "Delivered");
-
             await Clients.Group($"user:{fromUserId}").SendAsync("messageStatusUpdated", new
             {
-                messageId = messageId,
-                conversationId = conversationId,
+                messageId,
+                conversationId,
                 status = "Delivered"
             });
         }
 
-        // Confirm to sender
-        await Clients.Caller.SendAsync("messageSent", payload);
+        // Sender confirmation — include sender's own encrypted key so they can
+        // decrypt their sent message from history
+        var senderPayload = new
+        {
+            messageId,
+            conversationId,
+            fromUserId,
+            fromUserName = sender?.UserName ?? "Unknown",
+            fromDisplayName = sender?.DisplayName ?? "Unknown",
+            body,
+            contentType = contentType ?? "text",
+            mediaUrl,
+            createdAtUtc = DateTime.UtcNow,
+            messageStatus = "Sent",
+            encryptedKey = encryptedKeys?.FirstOrDefault(k => k.UserId == fromUserId)?.EncryptedKey
+        };
 
-        Console.WriteLine($"📨 [DirectMessage] {sender?.UserName} → {toUserId}: {body}");
+        await Clients.Caller.SendAsync("messageSent", senderPayload);
+
+        var senderUpdate = await _chatService.GetContactUpdateAsync(conversationId, fromUserId);
+        await Clients.Caller.SendAsync("contactUpdated", senderUpdate);
+
+        var receiverUpdate = await _chatService.GetContactUpdateAsync(conversationId, toUserId);
+        await Clients.Group($"user:{toUserId}").SendAsync("contactUpdated", receiverUpdate);
     }
 
     // ========================================
     // GROUP MESSAGING
     // ========================================
 
-    public async Task SendGroupMessage(Guid conversationId, string body, string? contentType = "text", string? mediaUrl = null)
+    // ChatHub.cs — SendGroupMessage
+    public async Task SendGroupMessage(
+        Guid conversationId,
+        string body,
+        string? contentType,
+        string? mediaUrl,
+        List<EncryptedKeyDto> encryptedKeys)   // ← new param
     {
         var senderId = CurrentUserId;
 
-        // Validate membership
         var groupDetails = await _groupService.GetGroupDetailsAsync(conversationId, senderId);
         if (groupDetails == null)
         {
@@ -212,54 +231,74 @@ public class ChatHub : Hub
             return;
         }
 
-        // Validate message
         if (string.IsNullOrWhiteSpace(body) && string.IsNullOrWhiteSpace(mediaUrl))
         {
             await Clients.Caller.SendAsync("error", "Message cannot be empty");
             return;
         }
 
-        // Save message
         var messageId = await _chatService.SaveMessageAsync(
-            conversationId,
-            senderId,
-            body ?? mediaUrl ?? "",
-            contentType ?? "text",
-            mediaUrl);
+            conversationId, senderId, body, contentType ?? "text", mediaUrl);
 
-        // Get sender details
+        // Persist per-user encrypted AES keys for all group members
+        if (encryptedKeys?.Count > 0)
+            await _chatService.SaveMessageKeysAsync(messageId, encryptedKeys);
+
         var sender = await _userRepository.GetByIdAsync(senderId);
 
-        var payload = new
+        // Notify each member with only their own encrypted key slice
+        foreach (var member in groupDetails.Members.Where(m => m.UserId != senderId))
         {
-            messageId = messageId,
-            conversationId = conversationId,
+            var memberEncryptedKey = encryptedKeys?
+                .FirstOrDefault(k => k.UserId == member.UserId)?.EncryptedKey;
+
+            var payload = new
+            {
+                messageId,
+                conversationId,
+                fromUserId = senderId,
+                fromUserName = sender?.UserName ?? "Unknown",
+                fromDisplayName = sender?.DisplayName ?? "Unknown",
+                body,
+                contentType = contentType ?? "text",
+                mediaUrl,
+                createdAtUtc = DateTime.UtcNow,
+                messageStatus = "Sent",
+                encryptedKey = memberEncryptedKey   // only this member's key
+            };
+
+            await Clients.Group($"user:{member.UserId}").SendAsync("messageReceived", payload);
+
+            if (_userConnections.ContainsKey(member.UserId))
+                await _chatService.UpdateMessageStatusAsync(messageId, member.UserId, "Delivered");
+        }
+
+        // Sender confirmation with sender's own key copy
+        var senderPayload = new
+        {
+            messageId,
+            conversationId,
             fromUserId = senderId,
             fromUserName = sender?.UserName ?? "Unknown",
             fromDisplayName = sender?.DisplayName ?? "Unknown",
-            body = body,
+            body,
             contentType = contentType ?? "text",
-            mediaUrl = mediaUrl,
+            mediaUrl,
             createdAtUtc = DateTime.UtcNow,
-            messageStatus = "Sent"
+            messageStatus = "Sent",
+            encryptedKey = encryptedKeys?.FirstOrDefault(k => k.UserId == senderId)?.EncryptedKey
         };
 
-        // Send to all group members except sender
+        await Clients.Caller.SendAsync("messageSent", senderPayload);
+
+        var senderUpdate = await _chatService.GetContactUpdateAsync(conversationId, senderId);
+        await Clients.Caller.SendAsync("contactUpdated", senderUpdate);
+
         foreach (var member in groupDetails.Members.Where(m => m.UserId != senderId))
         {
-            await Clients.Group($"user:{member.UserId}").SendAsync("messageReceived", payload);
-
-            // Auto-mark as delivered if member is online
-            if (_userConnections.ContainsKey(member.UserId))
-            {
-                await _chatService.UpdateMessageStatusAsync(messageId, member.UserId, "Delivered");
-            }
+            var memberUpdate = await _chatService.GetContactUpdateAsync(conversationId, member.UserId);
+            await Clients.Group($"user:{member.UserId}").SendAsync("contactUpdated", memberUpdate);
         }
-
-        // Confirm to sender
-        await Clients.Caller.SendAsync("messageSent", payload);
-
-        Console.WriteLine($"📨 [GroupMessage] {sender?.UserName} → Group {groupDetails.GroupName}: {body}");
     }
 
     // ========================================
@@ -329,6 +368,9 @@ public class ChatHub : Hub
                 lastReadMessageId = lastReadMessageId
             });
         }
+
+        var contactUpdate = await _chatService.GetContactUpdateAsync(conversationId, userId);
+        await Clients.Caller.SendAsync("contactUpdated", contactUpdate);
 
         // Notify reader's other devices
         await Clients.Group($"user:{userId}").SendAsync("conversationMarkedAsRead", new
@@ -890,193 +932,6 @@ public class ChatHub : Hub
         Console.WriteLine($"❌ [FriendRequest] Rejected: Request {requestId} by {userId}");
     }
 
-    // Add these methods to your existing ChatHub.cs file
-
-    // ========================================
-    // WEBRTC CALLING METHODS
-    // ========================================
-
-    /// <summary>
-    /// Send a call offer to initiate a call
-    /// </summary>
-    // Add these methods to your ChatHub.cs (replace existing calling methods)
-
-    // ========================================
-    // WEBRTC CALLING METHODS (FIXED)
-    // ========================================
-
-    /// <summary>
-    /// Send a call offer to initiate a call
-    /// CRITICAL FIX: Accept callId from client instead of generating new one
-    /// </summary>
-    public async Task SendCallOffer(
-    string callId,
-    Guid conversationId,
-    Guid recipientId,
-    string callType,
-    object sdp)
-    {
-        var callerId = CurrentUserId;
-
-        // ✅ REGISTER CALL
-        _activeCalls.TryAdd(callId, (callerId, recipientId));
-
-        Console.WriteLine($"📞 [Call] Offer from {callerId} to {recipientId} - CallId: {callId}");
-
-        var caller = await _userRepository.GetByIdAsync(callerId);
-
-        if (!IsUserOnline(recipientId))
-        {
-            _activeCalls.TryRemove(callId, out _); // cleanup
-            await Clients.Caller.SendAsync("callBusy", new { callId });
-            return;
-        }
-
-        var offer = new
-        {
-            callId,
-            conversationId,
-            callType,
-            from = new
-            {
-                userId = callerId,
-                userName = caller?.UserName ?? "Unknown",
-                displayName = caller?.DisplayName ?? "Unknown",
-                photoUrl = caller?.ProfilePhotoUrl
-            },
-            to = new { userId = recipientId },
-            sdp
-        };
-
-        await Clients.Group($"user:{recipientId}")
-            .SendAsync("calloffer", offer);
-
-        Console.WriteLine($"✅ [Call] Offer sent to {recipientId}");
-    }
-
-
-    /// <summary>
-    /// Send a call answer to accept a call
-    /// CRITICAL FIX: Send answer only to the OTHER participant
-    /// </summary>
-    public async Task SendCallAnswer(string callId, object sdp)
-    {
-        var userId = CurrentUserId;
-
-        Console.WriteLine($"✅ [Call] Answer received from {userId} for call {callId}");
-
-        var answer = new
-        {
-            callId = callId,
-            sdp = sdp
-        };
-
-        // CRITICAL FIX: Send answer to Others (not including caller)
-        // This ensures the answer goes to the person who initiated the call
-        await Clients.Others.SendAsync("callanswer", answer);
-
-        Console.WriteLine($"📤 [Call] Answer sent to other participants");
-    }
-
-    /// <summary>
-    /// Send ICE candidate for WebRTC connection
-    /// CRITICAL FIX: Send to Others to avoid self-receipt
-    /// </summary>
-    public async Task SendIceCandidate(string callId, object candidate)
-    {
-        var userId = CurrentUserId;
-
-        var iceCandidate = new
-        {
-            callId = callId,
-            candidate = candidate
-        };
-
-        // Send to all other participants (not self)
-        await Clients.Others.SendAsync("icecandidate", iceCandidate);
-
-        // Console.WriteLine($"🧊 [Call] ICE candidate sent for call {callId}");
-    }
-
-    /// <summary>
-    /// Reject an incoming call
-    /// </summary>
-    public async Task RejectCall(string callId, string reason)
-    {
-        var userId = CurrentUserId;
-
-        Console.WriteLine($"❌ [Call] Call {callId} rejected by {userId}");
-
-        await Clients.Others.SendAsync("callrejected", new
-        {
-            callId = callId,
-            reason = reason,
-            rejectedBy = userId
-        });
-    }
-
-    /// <summary>
-    /// End an active call
-    /// </summary>
-    public async Task EndCall(string callId, string reason)
-    {
-        var userId = CurrentUserId;
-
-        Console.WriteLine($"📴 [Call] Call {callId} ended by {userId}");
-
-        // ✅ REMOVE CALL HERE
-        _activeCalls.TryRemove(callId, out var call);
-
-        await Clients.Others.SendAsync("callended", new
-        {
-            callId,
-            endedBy = userId,
-            reason
-        });
-    }
-
-
-    /// <summary>
-    /// Send call state update (mute, video off, screen share)
-    /// </summary>
-    public async Task SendCallStateUpdate(
-    string callId,
-    CallStateUpdateDto stateUpdate)
-    {
-        var userId = CurrentUserId;
-        var otherUserId = GetOtherParticipant(callId);
-
-        if (otherUserId == Guid.Empty)
-            return; // 🔕 ignore late UI events
-
-        await Clients.User(otherUserId.ToString())
-            .SendAsync("callstateupdate", new
-            {
-                callId,
-                userId,
-                isMuted = stateUpdate.IsMuted,
-                isVideoOff = stateUpdate.IsVideoOff,
-                isScreenSharing = stateUpdate.IsScreenSharing
-            });
-
-        Console.WriteLine($"🔄 [Call] State update sent for call {callId}");
-    }
-
-
-
-    /// <summary>
-    /// Send busy signal when user is already in a call
-    /// </summary>
-    public async Task SendBusySignal(string callId, Guid recipientId)
-    {
-        await Clients.Group($"user:{recipientId}").SendAsync("callbusy", new
-        {
-            callId = callId
-        });
-
-        Console.WriteLine($"📵 [Call] Busy signal sent for call {callId}");
-    }
-
     // ========================================
     // UTILITY METHODS
     // ========================================
@@ -1094,50 +949,4 @@ public class ChatHub : Hub
         }
         return 0;
     }
-
-    public async Task SendRenegotiationOffer(string callId, object offer)
-    {
-        var otherUserId = GetOtherParticipant(callId);
-
-        await Clients.User(otherUserId.ToString())
-            .SendAsync("renegotiationoffer", new
-            {
-                callId,
-                sdp = offer
-            });
-    }
-
-
-    public async Task SendRenegotiationAnswer(string callId, object answer)
-    {
-        var otherUserId = GetOtherParticipant(callId);
-
-        await Clients.User(otherUserId.ToString())
-            .SendAsync("renegotiationanswer", new
-            {
-                callId,
-                sdp = answer
-            });
-    }
-
-
-
-    // ========================================
-    // CALL HELPERS
-    // ========================================
-    private Guid GetOtherParticipant(string callId)
-    {
-        if (!_activeCalls.TryGetValue(callId, out var call))
-        {
-            Console.WriteLine($"⚠️ Call not found for state update: {callId}");
-            return Guid.Empty;
-        }
-
-        return call.Caller == CurrentUserId
-            ? call.Callee
-            : call.Caller;
-    }
-
-
-
 }

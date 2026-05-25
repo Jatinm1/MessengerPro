@@ -1,5 +1,6 @@
 ﻿using ChatApp.Application.DTOs.Chat;
 using ChatApp.Application.DTOs.Group;
+using ChatApp.Application.DTOs.User;
 
 namespace ChatApp.Application.Interfaces.IServices;
 
@@ -44,4 +45,7 @@ public interface IChatService
     Task<string?> TransferAdminAsync(Guid conversationId, Guid oldAdminId, Guid newAdminId);
     Task<string?> UpdateGroupInfoAsync(Guid conversationId, Guid userId, string? groupName, string? groupPhotoUrl);
     Task<string?> DeleteGroupAsync(Guid conversationId, Guid userId);
+    Task<ContactUpdateDto?> GetContactUpdateAsync(Guid conversationId, Guid userId);
+    Task SaveMessageKeysAsync(long messageId, List<EncryptedKeyDto> keys);
+
 }

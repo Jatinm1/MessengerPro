@@ -9,4 +9,8 @@ public interface IUserService
     Task UpdateProfilePhotoAsync(Guid userId, string profilePhotoUrl);
     Task UpdateUserProfileAsync(Guid userId, string? displayName, string? bio);
     Task UpdateUserOnlineStatusAsync(Guid userId, bool isOnline);
+    // IUserService.cs — add these two method signatures
+
+    Task SavePublicKeyAsync(Guid userId, string publicKeyJwk);
+    Task<IEnumerable<UserPublicKeyDto>> GetPublicKeysAsync(List<Guid> userIds);
 }

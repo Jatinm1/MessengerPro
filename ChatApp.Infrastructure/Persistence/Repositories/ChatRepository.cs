@@ -388,5 +388,26 @@ public class ChatRepository : IChatRepository
         return (results, totalCount);
     }
 
+    public async Task<ContactUpdateDto?> GetContactUpdateAsync(Guid conversationId, Guid userId)
+    {
+        using var con = _ctx.CreateConnection();
+        return await con.QueryFirstOrDefaultAsync<ContactUpdateDto>(
+            "sp_GetContactUpdate",
+            new { ConversationId = conversationId, UserId = userId },
+            commandType: CommandType.StoredProcedure);
+    }
+
+    // ChatRepository
+    public async Task SaveMessageKeysAsync(long messageId, List<EncryptedKeyDto> keys)
+    {
+        using var con = _ctx.CreateConnection();
+        foreach (var k in keys)
+        {
+            await con.ExecuteAsync("sp_SaveMessageKeys",
+                new { MessageId = messageId, UserId = k.UserId, EncryptedKey = k.EncryptedKey },
+                commandType: CommandType.StoredProcedure);
+        }
+    }
+
 
 }

@@ -109,5 +109,37 @@ public class UserController : ControllerBase
         {
             return StatusCode(500, new { error = $"Upload failed: {ex.Message}" });
         }
+
+
+    }
+    // UserController.cs — add these two endpoints
+
+    /// <summary>
+    /// Registers or updates the current user's RSA public key.
+    /// Called once per device on first login after key generation.
+    /// </summary>
+    [HttpPost("public-key")]
+    public async Task<IActionResult> RegisterPublicKey([FromBody] RegisterPublicKeyRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.PublicKeyJwk))
+            return BadRequest(new { error = "Public key is required" });
+
+        await _userService.SavePublicKeyAsync(CurrentUserId, request.PublicKeyJwk);
+        return Ok(new { message = "Public key registered successfully" });
+    }
+
+    /// <summary>
+    /// Fetches RSA public keys for a list of user IDs.
+    /// Called before encrypting a message so we can encrypt the AES key
+    /// for each recipient (and the sender themselves).
+    /// </summary>
+    [HttpPost("public-keys")]
+    public async Task<IActionResult> GetPublicKeys([FromBody] GetPublicKeysRequest request)
+    {
+        if (request.UserIds == null || request.UserIds.Count == 0)
+            return BadRequest(new { error = "At least one userId is required" });
+
+        var keys = await _userService.GetPublicKeysAsync(request.UserIds);
+        return Ok(keys);
     }
 }

@@ -16,4 +16,8 @@ public interface IUserRepository
     Task UpdateProfilePhotoAsync(Guid userId, string profilePhotoUrl);
     Task UpdateUserOnlineStatusAsync(Guid userId, bool isOnline);
     Task LogoutUserAsync(Guid userId);
+    // IUserRepository.cs — add these two method signatures
+
+    Task SavePublicKeyAsync(Guid userId, string publicKeyJwk);
+    Task<IEnumerable<UserPublicKeyDto>> GetPublicKeysAsync(List<Guid> userIds);
 }

@@ -104,4 +104,29 @@ public class UserRepository : IUserRepository
             new { UserId = userId },
             commandType: CommandType.StoredProcedure);
     }
+    // UserRepository.cs — implement using Dapper
+
+    public async Task SavePublicKeyAsync(Guid userId, string publicKeyJwk)
+    {
+        using var con = _ctx.CreateConnection();
+        await con.ExecuteAsync(
+            @"UPDATE Users 
+          SET PublicKey = @PublicKey 
+          WHERE UserId = @UserId",
+            new { UserId = userId, PublicKey = publicKeyJwk });
+    }
+
+    public async Task<IEnumerable<UserPublicKeyDto>> GetPublicKeysAsync(List<Guid> userIds)
+    {
+        using var con = _ctx.CreateConnection();
+        return await con.QueryAsync<UserPublicKeyDto>(
+            @"SELECT CAST(UserId AS NVARCHAR(36)) AS UserId, 
+                 PublicKey AS PublicKeyJwk
+          FROM Users
+          WHERE UserId IN @UserIds
+            AND PublicKey IS NOT NULL",
+            new { UserIds = userIds });
+    }
+
+
 }

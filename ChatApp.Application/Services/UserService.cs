@@ -29,4 +29,16 @@ public class UserService : IUserService
 
     public async Task UpdateUserOnlineStatusAsync(Guid userId, bool isOnline)
         => await _users.UpdateUserOnlineStatusAsync(userId, isOnline);
+
+    // UserService.cs — implement the two methods
+
+    public async Task SavePublicKeyAsync(Guid userId, string publicKeyJwk)
+    {
+        await _users.SavePublicKeyAsync(userId, publicKeyJwk);
+    }
+
+    public async Task<IEnumerable<UserPublicKeyDto>> GetPublicKeysAsync(List<Guid> userIds)
+    {
+        return await _users.GetPublicKeysAsync(userIds);
+    }
 }

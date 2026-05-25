@@ -1,5 +1,6 @@
 ﻿using ChatApp.Application.DTOs.Chat;
 using ChatApp.Application.DTOs.Group;
+using ChatApp.Application.DTOs.User;
 using ChatApp.Application.Interfaces.IRepositories;
 using ChatApp.Application.Interfaces.IServices;
 using CloudinaryDotNet;
@@ -340,4 +341,15 @@ public class ChatService : IChatService
     {
         return await _groupRepository.DeleteGroupAsync(conversationId, userId);
     }
+
+    public async Task<ContactUpdateDto?> GetContactUpdateAsync(Guid conversationId, Guid userId)
+    {
+        return await _chatRepository.GetContactUpdateAsync(conversationId, userId);
+    }
+
+    public async Task SaveMessageKeysAsync(long messageId, List<EncryptedKeyDto> keys)
+    {
+        await _chatRepository.SaveMessageKeysAsync(messageId, keys);
+    }
+
 }

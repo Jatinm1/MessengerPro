@@ -1,5 +1,6 @@
 ﻿using ChatApp.Application.DTOs.Chat;
 using ChatApp.Application.DTOs.Group;
+using ChatApp.Application.DTOs.User;
 using ChatApp.Domain.Enums;
 
 namespace ChatApp.Application.Interfaces.IRepositories;
@@ -40,4 +41,6 @@ public interface IChatRepository
     Task<(long? MessageId, string? ErrorMessage)> ForwardMessageAsync(long originalMessageId, Guid forwardedBy, Guid targetConversationId);
     Task<Guid> GetConversationIdByMessageIdAsync(long messageId);
     Task<List<Guid>> GetConversationMembersAsync(Guid conversationId);
+    Task<ContactUpdateDto?> GetContactUpdateAsync(Guid conversationId, Guid userId);
+    Task SaveMessageKeysAsync(long messageId, List<EncryptedKeyDto> keys);
 }

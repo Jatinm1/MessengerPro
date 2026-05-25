@@ -33,12 +33,11 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
     {
-        policy.WithOrigins(
-    "https://messenger-pro-front.vercel.app"
-)
+        policy
             .AllowAnyHeader()
             .AllowAnyMethod()
-            .AllowCredentials();
+            .AllowCredentials()
+            .SetIsOriginAllowed(_ => true); // Allows localhost, file://, etc.
     });
 });
 
