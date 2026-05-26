@@ -1,4 +1,5 @@
-﻿using ChatApp.Application.DTOs.User;
+﻿using ChatApp.Application.DTOs.Auth;
+using ChatApp.Application.DTOs.User;
 using ChatApp.Application.Interfaces.IRepositories;
 using ChatApp.Domain.Chat;
 using ChatApp.Domain.Entities;
@@ -127,6 +128,55 @@ public class UserRepository : IUserRepository
             AND PublicKey IS NOT NULL",
             new { UserIds = userIds });
     }
+
+    public async Task SaveKeyBackupAsync(Guid userId, string encryptedKeyBackup, string salt)
+    {
+        using var con = _ctx.CreateConnection();
+        await con.ExecuteAsync(
+            @"UPDATE Users 
+          SET EncryptedKeyBackup = @EncryptedKeyBackup,
+              KeyBackupSalt      = @Salt
+          WHERE UserId = @UserId",
+            new { UserId = userId, EncryptedKeyBackup = encryptedKeyBackup, Salt = salt });
+    }
+
+    public async Task<KeyBackupDto?> GetKeyBackupAsync(Guid userId)
+    {
+        using var con = _ctx.CreateConnection();
+        return await con.QueryFirstOrDefaultAsync<KeyBackupDto>(
+            @"SELECT EncryptedKeyBackup, KeyBackupSalt AS Salt
+          FROM Users WHERE UserId = @UserId
+          AND EncryptedKeyBackup IS NOT NULL",
+            new { UserId = userId });
+    }
+
+    public async Task SaveDeviceSwitchPinAsync(Guid userId, string hashedPin, DateTime expiresAt)
+    {
+        using var con = _ctx.CreateConnection();
+        await con.ExecuteAsync(
+            @"UPDATE Users SET DeviceSwitchPin = @Pin, DeviceSwitchPinExpiresAt = @Expires
+          WHERE UserId = @UserId",
+            new { UserId = userId, Pin = hashedPin, Expires = expiresAt });
+    }
+
+    public async Task<DeviceSwitchPinDto?> GetDeviceSwitchPinAsync(Guid userId)
+    {
+        using var con = _ctx.CreateConnection();
+        return await con.QueryFirstOrDefaultAsync<DeviceSwitchPinDto>(
+            @"SELECT DeviceSwitchPin AS HashedPin, DeviceSwitchPinExpiresAt AS ExpiresAt
+          FROM Users WHERE UserId = @UserId",
+            new { UserId = userId });
+    }
+
+    public async Task ClearDeviceSwitchPinAsync(Guid userId)
+    {
+        using var con = _ctx.CreateConnection();
+        await con.ExecuteAsync(
+            @"UPDATE Users SET DeviceSwitchPin = NULL, DeviceSwitchPinExpiresAt = NULL
+          WHERE UserId = @UserId",
+            new { UserId = userId });
+    }
+
 
 
 }

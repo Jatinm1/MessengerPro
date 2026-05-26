@@ -1,4 +1,6 @@
-﻿using ChatApp.Application.DTOs.User;
+﻿using ChatApp.Application.DTOs.Auth;
+using ChatApp.Application.DTOs.User;
+using ChatApp.Application.Interfaces.IRepositories;
 using ChatApp.Application.Interfaces.IServices;
 using ChatApp.Application.Services;
 using ChatApp.Domain.ValueObjects;
@@ -14,15 +16,19 @@ namespace ChatApp.Api.Controllers;
 public class UserController : ControllerBase
 {
     private readonly IUserService _userService;
+    private readonly IUserRepository _userRepository;
     private readonly ICloudinaryService _cloudinaryService;
+    private readonly IEmailService _emailService;
 
     /// <summary>
     /// Initializes a new instance of the UserController with user profile services.
     /// </summary>
-    public UserController(IUserService userService, ICloudinaryService cloudinaryService)
+    public UserController(IUserService userService, ICloudinaryService cloudinaryService, IEmailService emailService, IUserRepository userRepository)
     {
         _userService = userService;
         _cloudinaryService = cloudinaryService;
+        _emailService = emailService;
+        _userRepository = userRepository;
     }
 
     /// <summary>
@@ -141,5 +147,78 @@ public class UserController : ControllerBase
 
         var keys = await _userService.GetPublicKeysAsync(request.UserIds);
         return Ok(keys);
+    }
+
+    // UserController.cs — add these endpoints
+
+    /// <summary>
+    /// Saves an encrypted backup of the user's private key (protected by a PIN).
+    /// The server never sees the actual private key — only the encrypted blob.
+    /// </summary>
+    [HttpPost("key-backup")]
+    public async Task<IActionResult> SaveKeyBackup([FromBody] SaveKeyBackupRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.EncryptedKeyBackup) ||
+            string.IsNullOrWhiteSpace(request.Salt))
+            return BadRequest(new { error = "EncryptedKeyBackup and Salt are required" });
+
+        await _userService.SaveKeyBackupAsync(CurrentUserId, request.EncryptedKeyBackup, request.Salt);
+        return Ok(new { message = "Key backup saved" });
+    }
+
+    /// <summary>
+    /// Returns the encrypted key backup blob so a new device can attempt to import it.
+    /// </summary>
+    [HttpGet("key-backup")]
+    public async Task<IActionResult> GetKeyBackup()
+    {
+        var backup = await _userService.GetKeyBackupAsync(CurrentUserId);
+        if (backup == null)
+            return NotFound(new { error = "No key backup found" });
+
+        return Ok(backup);
+    }
+
+    // UserController.cs — add two endpoints
+
+    /// <summary>
+    /// Sends a 6-digit PIN to the user's registered email for device switch verification.
+    /// </summary>
+    [HttpPost("device-switch/request-pin")]
+    public async Task<IActionResult> RequestDeviceSwitchPin()
+    {
+        var user = await _userRepository.GetByIdAsync(CurrentUserId);
+        if (user == null) return NotFound();
+
+        // Generate 6-digit PIN
+        var pin = new Random().Next(100000, 999999).ToString();
+        var expires = DateTime.UtcNow.AddMinutes(10);
+
+        // Store hashed PIN and expiry
+        var hashedPin = BCrypt.Net.BCrypt.HashPassword(pin);
+        await _userService.SaveDeviceSwitchPinAsync(CurrentUserId, hashedPin, expires);
+
+        // Send email
+        await _emailService.SendDeviceSwitchPinAsync(user.Email!, user.DisplayName!, pin);
+
+        return Ok(new { message = "PIN sent to your registered email" });
+    }
+
+    /// <summary>
+    /// Verifies the PIN. On success, returns a one-time token the client
+    /// uses to confirm the device switch.
+    /// </summary>
+    [HttpPost("device-switch/verify-pin")]
+    public async Task<IActionResult> VerifyDeviceSwitchPin([FromBody] VerifyPinRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Pin))
+            return BadRequest(new { error = "PIN is required" });
+
+        var result = await _userService.VerifyDeviceSwitchPinAsync(CurrentUserId, request.Pin);
+
+        if (!result.Success)
+            return BadRequest(new { error = result.Error });
+
+        return Ok(new { verified = true });
     }
 }

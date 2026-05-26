@@ -1,4 +1,5 @@
-﻿using ChatApp.Application.DTOs.User;
+﻿using ChatApp.Application.DTOs.Auth;
+using ChatApp.Application.DTOs.User;
 using ChatApp.Domain.ValueObjects;
 
 public interface IUserService
@@ -13,4 +14,8 @@ public interface IUserService
 
     Task SavePublicKeyAsync(Guid userId, string publicKeyJwk);
     Task<IEnumerable<UserPublicKeyDto>> GetPublicKeysAsync(List<Guid> userIds);
+    Task SaveKeyBackupAsync(Guid userId, string encryptedKeyBackup, string salt);
+    Task<KeyBackupDto?> GetKeyBackupAsync(Guid userId);
+    Task SaveDeviceSwitchPinAsync(Guid userId, string hashedPin, DateTime expiresAt);
+    Task<(bool Success, string? Error)> VerifyDeviceSwitchPinAsync(Guid userId, string pin);
 }
