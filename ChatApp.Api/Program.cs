@@ -233,7 +233,9 @@ app.UseAuthorization();
 app.MapControllers();
 
 // Map SignalR Hub
+
 app.MapHub<ChatHub>("/hubs/chat").RequireAuthorization();
+app.MapHub<CallHub>("/hubs/call").RequireAuthorization();
 
 // ========================================
 // Application Info (Optional)
