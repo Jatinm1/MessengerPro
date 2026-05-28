@@ -7,6 +7,7 @@ using ChatApp.Application.Interfaces.IServices;
 using ChatApp.Application.Services;
 using ChatApp.Infrastructure.Persistence;
 using ChatApp.Infrastructure.Persistence.Repositories;
+// Call repository is in the same namespace — no extra using needed
 using ChatApp.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Http.Features;
@@ -76,6 +77,7 @@ builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IGroupService, GroupService>();
 builder.Services.AddScoped<IFriendService, FriendService>();
+builder.Services.AddScoped<ICallRepository, CallRepository>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 
 // ========================================
