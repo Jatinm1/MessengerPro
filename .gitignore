@@ -67,7 +67,6 @@ TestResult.xml
 **/Properties/launchSettings.json
 
 # Local development settings
-appsettings.json
 appsettings.Development.json
 appsettings.Local.json
 *.Development.json
