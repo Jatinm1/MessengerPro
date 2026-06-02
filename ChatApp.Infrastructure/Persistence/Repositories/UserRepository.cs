@@ -31,14 +31,14 @@ public class UserRepository : IUserRepository
             commandType: CommandType.StoredProcedure);
     }
 
-    public async Task<Guid> CreateAsync(string userName, string displayName, string passwordHash)
+    public async Task<Guid> CreateAsync(string userName, string displayName, string passwordHash, string emailId)
     {
         using var con = _ctx.CreateConnection();
         var id = Guid.NewGuid();
 
         await con.ExecuteAsync(
             "sp_CreateUser",
-            new { UserId = id, UserName = userName, DisplayName = displayName, PasswordHash = passwordHash },
+            new { UserId = id, UserName = userName, DisplayName = displayName, PasswordHash = passwordHash, Email = emailId },
             commandType: CommandType.StoredProcedure);
 
         return id;

@@ -67,11 +67,11 @@ namespace ChatApp.Application.Services
         /// <summary>
         /// Registers a new user with hashed password and returns the created user.
         /// </summary>
-        public async Task<User> RegisterAsync(string userName, string displayName, string password)
+        public async Task<User> RegisterAsync(string userName, string displayName, string password, string emailId)
         {
             // Hash password with work factor of 11 (balanced security/performance)
             var hash = BCrypt.Net.BCrypt.HashPassword(password, workFactor: 11);
-            var id = await _users.CreateAsync(userName, displayName, hash);
+            var id = await _users.CreateAsync(userName, displayName, hash, emailId);
             return (await _users.GetByIdAsync(id))!;
         }
 

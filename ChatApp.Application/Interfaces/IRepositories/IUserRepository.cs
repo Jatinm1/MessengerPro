@@ -9,7 +9,7 @@ public interface IUserRepository
 {
     Task<User?> GetByUserNameAsync(string userName);
     Task<User?> GetByIdAsync(Guid userId);
-    Task<Guid> CreateAsync(string userName, string displayName, string passwordHash);
+    Task<Guid> CreateAsync(string userName, string displayName, string passwordHash, string emailId);
     Task<IEnumerable<UserDto>> GetAllUsersAsync();
     Task<UserProfileDto?> GetUserProfileAsync(Guid userId);
     Task<DTOs.User.OtherUserProfileDto?> GetUserProfileByIdAsync(Guid userId, Guid viewerId);

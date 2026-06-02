@@ -34,7 +34,8 @@ public class AuthController : ControllerBase
         var user = await _authService.RegisterAsync(
             request.UserName,
             request.DisplayName,
-            request.Password);
+            request.Password,
+            request.emailId);
 
         return Ok(user);
     }
