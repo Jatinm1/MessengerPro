@@ -21,4 +21,5 @@ public class CallHistoryDto
     public DateTime? EndedAt { get; init; }
     public int DurationSeconds { get; init; }
     public string Reason { get; init; } = "ended";
+    public string CallType { get; init; } = "audio";  // ← NEW
 }

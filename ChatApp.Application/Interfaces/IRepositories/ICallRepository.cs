@@ -1,5 +1,4 @@
-﻿// ChatApp.Application/Interfaces/IRepositories/ICallRepository.cs
-using ChatApp.Application.DTOs.Call;
+﻿using ChatApp.Application.DTOs.Call;
 
 namespace ChatApp.Application.Interfaces.IRepositories;
 
@@ -10,6 +9,7 @@ public interface ICallRepository
         Guid conversationId,
         Guid callerId,
         Guid calleeId,
+        string callType,          // "audio" | "video"  ← NEW
         DateTime startedAt,
         DateTime? connectedAt,
         int durationSeconds,

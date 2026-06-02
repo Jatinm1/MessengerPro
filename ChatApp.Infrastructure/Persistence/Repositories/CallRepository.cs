@@ -1,4 +1,6 @@
-﻿// ChatApp.Infrastructure/Persistence/Repositories/CallRepository.cs
+﻿// ============================================================
+// ChatApp.Infrastructure/Persistence/Repositories/CallRepository.cs
+// ============================================================
 using ChatApp.Application.DTOs.Call;
 using ChatApp.Application.Interfaces.IRepositories;
 using ChatApp.Infrastructure.Persistence;
@@ -17,6 +19,7 @@ public class CallRepository : ICallRepository
         Guid conversationId,
         Guid callerId,
         Guid calleeId,
+        string callType,
         DateTime startedAt,
         DateTime? connectedAt,
         int durationSeconds,
@@ -31,6 +34,7 @@ public class CallRepository : ICallRepository
                 ConversationId = conversationId,
                 CallerId = callerId,
                 CalleeId = calleeId,
+                CallType = callType,
                 StartedAt = startedAt,
                 ConnectedAt = connectedAt,
                 EndedAt = DateTime.UtcNow,

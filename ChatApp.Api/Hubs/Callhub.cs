@@ -1,5 +1,7 @@
-﻿// ChatApp.Api/Hubs/CallHub.cs
-// WebRTC signaling hub for audio calls — with call history persistence
+﻿// ============================================================
+// ChatApp.Api/Hubs/CallHub.cs
+// WebRTC signaling hub — Audio + Video + Screen Share
+// ============================================================
 using ChatApp.Application.Interfaces.IRepositories;
 using ChatApp.Application.Interfaces.IServices;
 using Microsoft.AspNetCore.Authorization;
@@ -12,10 +14,10 @@ namespace ChatApp.Api.Hubs;
 [Authorize]
 public class CallHub : Hub
 {
-    // Active calls: callId -> CallSession
+    // callId → session
     private static readonly ConcurrentDictionary<string, ActiveCallSession> _activeCalls = new();
 
-    // User -> active callId (prevent multiple simultaneous calls)
+    // userId → callId  (prevents double-calls)
     private static readonly ConcurrentDictionary<Guid, string> _userActiveCall = new();
 
     private readonly IUserRepository _userRepository;
@@ -32,14 +34,16 @@ public class CallHub : Hub
         _callRepository = callRepository;
     }
 
+    // ── Convenience ─────────────────────────────────────────────────────────
     private Guid CurrentUserId => Guid.Parse(
         Context.User!.FindFirstValue(ClaimTypes.NameIdentifier) ??
         Context.User!.FindFirstValue("sub")!);
 
+    // ── Connection lifecycle ─────────────────────────────────────────────────
     public override async Task OnConnectedAsync()
     {
         var userId = CurrentUserId;
-        await Groups.AddToGroupAsync(Context.ConnectionId, $"call-user:{userId}");
+        await Groups.AddToGroupAsync(Context.ConnectionId, UserGroup(userId));
         await base.OnConnectedAsync();
     }
 
@@ -47,23 +51,26 @@ public class CallHub : Hub
     {
         var userId = CurrentUserId;
 
-        // Auto-end any active call on disconnect
         if (_userActiveCall.TryGetValue(userId, out var callId))
         {
+            // Auto-end active call on disconnect
             await EndCallInternal(callId, userId, "disconnected");
         }
 
-        await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"call-user:{userId}");
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, UserGroup(userId));
         await base.OnDisconnectedAsync(exception);
     }
 
-    // ────────────────────────────────────────────────────────────────────────
+    // ==========================================================================
     // INITIATE CALL
-    // ────────────────────────────────────────────────────────────────────────
-    public async Task InitiateCall(Guid toUserId, string callId, string conversationId)
+    // ==========================================================================
+
+    /// <param name="callType">"audio" or "video"</param>
+    public async Task InitiateCall(Guid toUserId, string callId, string conversationId, string callType = "audio")
     {
         var fromUserId = CurrentUserId;
 
+        // Validate friends
         var areFriends = await _friendService.AreFriendsAsync(fromUserId, toUserId);
         if (!areFriends)
         {
@@ -71,12 +78,14 @@ public class CallHub : Hub
             return;
         }
 
+        // Caller already in a call
         if (_userActiveCall.ContainsKey(fromUserId))
         {
             await Clients.Caller.SendAsync("callError", new { callId, message = "You are already in a call" });
             return;
         }
 
+        // Callee is busy
         if (_userActiveCall.ContainsKey(toUserId))
         {
             await Clients.Caller.SendAsync("calleeBusy", new { callId, toUserId });
@@ -91,6 +100,7 @@ public class CallHub : Hub
             ConversationId = conversationId,
             CallerId = fromUserId,
             CalleeId = toUserId,
+            CallType = callType,
             Status = "ringing",
             StartedAt = DateTime.UtcNow
         };
@@ -98,29 +108,32 @@ public class CallHub : Hub
         _activeCalls[callId] = session;
         _userActiveCall[fromUserId] = callId;
 
-        await Clients.Group($"call-user:{toUserId}").SendAsync("incomingCall", new
+        // Notify callee
+        await Clients.Group(UserGroup(toUserId)).SendAsync("incomingCall", new
         {
             callId,
             conversationId,
             callerId = fromUserId,
             callerName = caller?.DisplayName ?? caller?.UserName ?? "Unknown",
             callerPhoto = caller?.ProfilePhotoUrl,
-            callType = "audio"
+            callType
         });
 
-        Console.WriteLine($"📞 [Call] Initiated: {callId} | {fromUserId} → {toUserId}");
+        Console.WriteLine($"📞 [CallHub] Initiated: {callId} ({callType}) | {fromUserId} → {toUserId}");
     }
 
-    // ────────────────────────────────────────────────────────────────────────
+    // ==========================================================================
     // ANSWER / DECLINE
-    // ────────────────────────────────────────────────────────────────────────
+    // ==========================================================================
+
     public async Task AnswerCall(string callId)
     {
         var calleeId = CurrentUserId;
 
         if (!_activeCalls.TryGetValue(callId, out var session))
         {
-            await Clients.Caller.SendAsync("callError", new { callId, message = "Call not found or already ended" });
+            await Clients.Caller.SendAsync("callError",
+                new { callId, message = "Call not found or already ended" });
             return;
         }
 
@@ -133,72 +146,99 @@ public class CallHub : Hub
         session.Status = "connecting";
         _userActiveCall[calleeId] = callId;
 
-        await Clients.Group($"call-user:{session.CallerId}").SendAsync("callAnswered", new { callId });
+        // Tell caller to start WebRTC (create offer)
+        await Clients.Group(UserGroup(session.CallerId)).SendAsync("callAnswered", new { callId });
 
-        Console.WriteLine($"✅ [Call] Answered: {callId}");
+        Console.WriteLine($"✅ [CallHub] Answered: {callId} ({session.CallType})");
     }
 
     public async Task DeclineCall(string callId)
     {
-        var userId = CurrentUserId;
         if (!_activeCalls.TryGetValue(callId, out _)) return;
-        await EndCallInternal(callId, userId, "declined");
-        Console.WriteLine($"❌ [Call] Declined: {callId}");
+        await EndCallInternal(callId, CurrentUserId, "declined");
+        Console.WriteLine($"❌ [CallHub] Declined: {callId}");
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // WEBRTC SIGNALING (SDP + ICE)
-    // ────────────────────────────────────────────────────────────────────────
+    // ==========================================================================
+    // WEBRTC SIGNALING
+    // ==========================================================================
+
     public async Task SendOffer(string callId, string sdp)
     {
-        var fromUserId = CurrentUserId;
-        if (!_activeCalls.TryGetValue(callId, out var session)) return;
-        var targetId = session.CallerId == fromUserId ? session.CalleeId : session.CallerId;
-        await Clients.Group($"call-user:{targetId}").SendAsync("receiveOffer", new { callId, sdp });
+        var peer = GetPeer(callId, CurrentUserId);
+        if (peer == null) return;
+        await Clients.Group(UserGroup(peer.Value)).SendAsync("receiveOffer", new { callId, sdp });
     }
 
     public async Task SendAnswer(string callId, string sdp)
     {
-        var fromUserId = CurrentUserId;
-        if (!_activeCalls.TryGetValue(callId, out var session)) return;
-        var targetId = session.CallerId == fromUserId ? session.CalleeId : session.CallerId;
-        await Clients.Group($"call-user:{targetId}").SendAsync("receiveAnswer", new { callId, sdp });
-        session.Status = "connected";
-        session.ConnectedAt = DateTime.UtcNow;
+        var peer = GetPeer(callId, CurrentUserId);
+        if (peer == null) return;
+        await Clients.Group(UserGroup(peer.Value)).SendAsync("receiveAnswer", new { callId, sdp });
+
+        if (_activeCalls.TryGetValue(callId, out var session))
+        {
+            session.Status = "connected";
+            session.ConnectedAt = DateTime.UtcNow;
+        }
     }
 
     public async Task SendIceCandidate(string callId, string candidateJson)
     {
-        var fromUserId = CurrentUserId;
-        if (!_activeCalls.TryGetValue(callId, out var session)) return;
-        var targetId = session.CallerId == fromUserId ? session.CalleeId : session.CallerId;
-        await Clients.Group($"call-user:{targetId}").SendAsync("receiveIceCandidate", new { callId, candidate = candidateJson });
+        var peer = GetPeer(callId, CurrentUserId);
+        if (peer == null) return;
+        await Clients.Group(UserGroup(peer.Value))
+            .SendAsync("receiveIceCandidate", new { callId, candidate = candidateJson });
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // CALL CONTROL (Mute)
-    // ────────────────────────────────────────────────────────────────────────
-    public async Task UpdateCallState(string callId, bool isMuted)
+    // ==========================================================================
+    // CALL STATE (Mute / Video / Screen share)
+    // ==========================================================================
+
+    /// <summary>
+    /// Called when local user toggles mute, video, or screen share.
+    /// The peer receives peerStateChanged so it can update its UI.
+    /// </summary>
+    public async Task UpdateCallState(string callId, bool isMuted, bool isVideoOff, bool isScreenSharing)
     {
         var userId = CurrentUserId;
-        if (!_activeCalls.TryGetValue(callId, out var session)) return;
-        var targetId = session.CallerId == userId ? session.CalleeId : session.CallerId;
-        await Clients.Group($"call-user:{targetId}").SendAsync("peerStateChanged", new { callId, userId, isMuted });
+        var peer = GetPeer(callId, userId);
+        if (peer == null) return;
+
+        await Clients.Group(UserGroup(peer.Value)).SendAsync("peerStateChanged", new
+        {
+            callId,
+            userId,
+            isMuted,
+            isVideoOff,
+            isScreenSharing
+        });
     }
 
-    // ────────────────────────────────────────────────────────────────────────
+    // ==========================================================================
     // END CALL
-    // ────────────────────────────────────────────────────────────────────────
+    // ==========================================================================
+
     public async Task EndCall(string callId)
     {
         var userId = CurrentUserId;
         await EndCallInternal(callId, userId, "ended");
-        Console.WriteLine($"📵 [Call] Ended: {callId} by {userId}");
+        Console.WriteLine($"📵 [CallHub] Ended: {callId} by {userId}");
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // PRIVATE HELPERS
-    // ────────────────────────────────────────────────────────────────────────
+    // ==========================================================================
+    // HELPERS
+    // ==========================================================================
+
+    private static string UserGroup(Guid userId) => $"call-user:{userId}";
+
+    /// <summary>Returns the other participant's userId, or null if session not found.</summary>
+    private Guid? GetPeer(string callId, Guid userId)
+    {
+        if (!_activeCalls.TryGetValue(callId, out var session)) return null;
+        return session.CallerId == userId ? session.CalleeId : session.CallerId;
+    }
+
     private async Task EndCallInternal(string callId, Guid initiatedBy, string reason)
     {
         if (!_activeCalls.TryRemove(callId, out var session)) return;
@@ -212,8 +252,9 @@ public class CallHub : Hub
 
         var payload = new { callId, reason, initiatedBy, durationSeconds = duration };
 
-        await Clients.Group($"call-user:{session.CallerId}").SendAsync("callEnded", payload);
-        await Clients.Group($"call-user:{session.CalleeId}").SendAsync("callEnded", payload);
+        // Notify both parties
+        await Clients.Group(UserGroup(session.CallerId)).SendAsync("callEnded", payload);
+        await Clients.Group(UserGroup(session.CalleeId)).SendAsync("callEnded", payload);
 
         // ── Persist to DB (fire-and-forget, never block the hub) ────────────
         _ = Task.Run(async () =>
@@ -225,6 +266,7 @@ public class CallHub : Hub
                     conversationId: Guid.Parse(session.ConversationId),
                     callerId: session.CallerId,
                     calleeId: session.CalleeId,
+                    callType: session.CallType,
                     startedAt: session.StartedAt,
                     connectedAt: session.ConnectedAt,
                     durationSeconds: duration,
@@ -232,7 +274,7 @@ public class CallHub : Hub
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"⚠️ [CallHistory] Failed to persist call {callId}: {ex.Message}");
+                Console.WriteLine($"⚠️ [CallHub] Failed to persist call {callId}: {ex.Message}");
             }
         });
     }
@@ -240,13 +282,14 @@ public class CallHub : Hub
     public static bool IsUserInCall(Guid userId) => _userActiveCall.ContainsKey(userId);
 }
 
-// ── Supporting model ────────────────────────────────────────────────────────
+// ── Session model ────────────────────────────────────────────────────────────
 public class ActiveCallSession
 {
     public string CallId { get; set; } = "";
     public string ConversationId { get; set; } = "";
     public Guid CallerId { get; set; }
     public Guid CalleeId { get; set; }
+    public string CallType { get; set; } = "audio";  // "audio" | "video"
     public string Status { get; set; } = "ringing";
     public DateTime StartedAt { get; set; }
     public DateTime? ConnectedAt { get; set; }
