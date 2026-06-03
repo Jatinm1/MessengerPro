@@ -1,13 +1,18 @@
-﻿// ========================================
+﻿// ============================================================
 // ChatApp.Api/Program.cs
-// ========================================
+// MODIFIED FILE — Fixes:
+//   VULN-002: ValidateIssuer + ValidateAudience = true
+//   VULN-003: Cookie-based token extraction for SignalR
+//   VULN-005: Tokens set via HttpOnly cookies; Bearer reads from
+//             access_token cookie first, then Authorization header
+//   VULN-025: JWT key minimum 32-char enforced at startup
+// ============================================================
 using ChatApp.Api.Hubs;
 using ChatApp.Application.Interfaces.IRepositories;
 using ChatApp.Application.Interfaces.IServices;
 using ChatApp.Application.Services;
 using ChatApp.Infrastructure.Persistence;
 using ChatApp.Infrastructure.Persistence.Repositories;
-// Call repository is in the same namespace — no extra using needed
 using ChatApp.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Http.Features;
@@ -17,116 +22,111 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ========================================
-// Railway Dynamic Port Binding
-// ========================================
+// ── Railway Dynamic Port ──────────────────────────────────────
 var port = Environment.GetEnvironmentVariable("PORT");
 if (!string.IsNullOrEmpty(port))
-{
     builder.WebHost.UseUrls($"http://*:{port}");
-}
+
 var cfg = builder.Configuration;
 
-// ========================================
-// CORS Configuration
-// ========================================
+// ── VULN-025: JWT Key Validation ──────────────────────────────
+var jwtKey = cfg["Jwt:Key"]
+    ?? throw new InvalidOperationException("Jwt:Key not configured.");
+if (jwtKey.Length < 32)
+    throw new InvalidOperationException("Jwt:Key must be at least 256 bits (32 characters).");
+
+var jwtIssuer = cfg["Jwt:Issuer"] ?? throw new InvalidOperationException("Jwt:Issuer not configured.");
+var jwtAudience = cfg["Jwt:Audience"] ?? throw new InvalidOperationException("Jwt:Audience not configured.");
+var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+
+// ── CORS ──────────────────────────────────────────────────────
+var allowedOrigins = cfg.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? new[] { "http://localhost:4200" };
+
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll", policy =>
-    {
-        policy
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials()
-            .SetIsOriginAllowed(_ => true); // Allows localhost, file://, etc.
-    });
+    options.AddPolicy("SecurePolicy", policy =>
+        policy.WithOrigins(allowedOrigins)
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials());   // required for cookie-based auth
 });
 
-// ========================================
-// File Upload Configuration
-// ========================================
-builder.Services.Configure<FormOptions>(options =>
-{
-    options.MultipartBodyLengthLimit = 52428800; // 50MB
-});
+// ── File Upload ───────────────────────────────────────────────
+builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = 52_428_800);
+builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 52_428_800);
 
-builder.WebHost.ConfigureKestrel(serverOptions =>
-{
-    serverOptions.Limits.MaxRequestBodySize = 52428800; // 50MB
-});
-
-// ========================================
-// Database Context
-// ========================================
+// ── Database ──────────────────────────────────────────────────
 builder.Services.AddSingleton<DapperContext>();
 
-// ========================================
-// Repository Layer (Data Access)
-// ========================================
+// ── Repositories ──────────────────────────────────────────────
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IChatRepository, ChatRepository>();
 builder.Services.AddScoped<IFriendRepository, FriendRepository>();
 builder.Services.AddScoped<IGroupRepository, GroupRepository>();
-builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+builder.Services.AddScoped<ICallRepository, CallRepository>();
 
-// ========================================
-// Application Services (Business Logic)
-// ========================================
+// ── Services ──────────────────────────────────────────────────
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IGroupService, GroupService>();
 builder.Services.AddScoped<IFriendService, FriendService>();
-builder.Services.AddScoped<ICallRepository, CallRepository>();
+builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
-
-// ========================================
-// Infrastructure Services (External)
-// ========================================
 builder.Services.AddScoped<ICloudinaryService, CloudinaryService>();
 
-// ========================================
-// SignalR
-// ========================================
+// ── Memory Cache (for lockout / rate limit) ───────────────────
+builder.Services.AddMemoryCache();
+
+// ── SignalR ───────────────────────────────────────────────────
 builder.Services.AddSignalR(options =>
 {
-    options.EnableDetailedErrors = true; // For development debugging
+    // NEVER set EnableDetailedErrors = true in production
+    options.EnableDetailedErrors = builder.Environment.IsDevelopment();
     options.KeepAliveInterval = TimeSpan.FromSeconds(15);
     options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
 });
 
-// ========================================
-// JWT Authentication
-// ========================================
-var jwtKey = cfg["Jwt:Key"] ?? throw new InvalidOperationException("JWT Key not configured");
-var key = Encoding.UTF8.GetBytes(jwtKey);
-
+// ── VULN-002: JWT with Issuer + Audience validation ───────────
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(key),
-            ValidateIssuer = false,
-            ValidateAudience = false,
+            IssuerSigningKey = signingKey,
+            ValidateIssuer = true,   // VULN-002 fix
+            ValidIssuer = jwtIssuer,
+            ValidateAudience = true,   // VULN-002 fix
+            ValidAudience = jwtAudience,
+            ValidateLifetime = true,
             ClockSkew = TimeSpan.Zero
         };
 
-        // ✅ Allow SignalR to receive token via query string
         options.Events = new JwtBearerEvents
         {
             OnMessageReceived = context =>
             {
-                var accessToken = context.Request.Query["access_token"];
                 var path = context.HttpContext.Request.Path;
 
-                // Allow token via query string for ALL SignalR hubs
-                if (!string.IsNullOrEmpty(accessToken) &&
-                    (path.StartsWithSegments("/hubs/chat") ||
-                     path.StartsWithSegments("/hubs/call")))
+                // VULN-005: Read access token from HttpOnly cookie first
+                var cookieToken = context.HttpContext.Request.Cookies["access_token"];
+                if (!string.IsNullOrEmpty(cookieToken))
                 {
-                    context.Token = accessToken;
+                    context.Token = cookieToken;
+                    return Task.CompletedTask;
+                }
+
+                // SignalR: fall back to query string (only for /hubs/* paths)
+                // Note: The query-string token must be the access token from the cookie
+                // On the Angular side, we pass it once during hub negotiation.
+                if (path.StartsWithSegments("/hubs"))
+                {
+                    var qsToken = context.Request.Query["access_token"];
+                    if (!string.IsNullOrEmpty(qsToken))
+                        context.Token = qsToken;
                 }
 
                 return Task.CompletedTask;
@@ -136,141 +136,77 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization();
 
-// ========================================
-// Controllers & API Explorer
-// ========================================
+// ── Controllers + API Explorer ────────────────────────────────
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 
-// ========================================
-// Swagger Configuration
-// ========================================
-builder.Services.AddSwaggerGen(c =>
+// ── Swagger (dev only) ────────────────────────────────────────
+if (builder.Environment.IsDevelopment())
 {
-    c.SwaggerDoc("v1", new OpenApiInfo
+    builder.Services.AddSwaggerGen(c =>
     {
-        Title = "ChatApp API",
-        Version = "v1",
-        Description = "Full-Featured Chat Application API with SignalR and JWT Authentication",
-        Contact = new OpenApiContact
+        c.SwaggerDoc("v1", new OpenApiInfo { Title = "ChatApp API", Version = "v1" });
+        var securityScheme = new OpenApiSecurityScheme
         {
-            Name = "Your Name",
-            Email = "your.email@example.com"
-        }
+            Name = "Authorization",
+            Description = "Enter 'Bearer {token}'",
+            In = ParameterLocation.Header,
+            Type = SecuritySchemeType.ApiKey,
+            Scheme = "Bearer",
+            BearerFormat = "JWT",
+            Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+        };
+        c.AddSecurityDefinition("Bearer", securityScheme);
+        c.AddSecurityRequirement(new OpenApiSecurityRequirement
+        {
+            { new OpenApiSecurityScheme { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" } }, Array.Empty<string>() }
+        });
     });
+}
 
-    // JWT Authentication in Swagger
-    var securityScheme = new OpenApiSecurityScheme
-    {
-        Name = "Authorization",
-        Description = "Enter 'Bearer' [space] and then your JWT token.\n\nExample: Bearer eyJhbGc...",
-        In = ParameterLocation.Header,
-        Type = SecuritySchemeType.ApiKey,
-        Scheme = "Bearer",
-        BearerFormat = "JWT",
-        Reference = new OpenApiReference
-        {
-            Type = ReferenceType.SecurityScheme,
-            Id = "Bearer"
-        }
-    };
-
-    c.AddSecurityDefinition("Bearer", securityScheme);
-
-    c.AddSecurityRequirement(new OpenApiSecurityRequirement
-    {
-        {
-            new OpenApiSecurityScheme
-            {
-                Reference = new OpenApiReference
-                {
-                    Type = ReferenceType.SecurityScheme,
-                    Id = "Bearer"
-                }
-            },
-            Array.Empty<string>()
-        }
-    });
-
-    // Optional: Add XML comments if you have them
-    // var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
-    // var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
-    // c.IncludeXmlComments(xmlPath);
-});
-
-// ========================================
-// Build Application
-// ========================================
+// ── Build ─────────────────────────────────────────────────────
 var app = builder.Build();
 
-// ========================================
-// Middleware Pipeline
-// ========================================
-
-// CORS - Must be before Authentication
-app.UseCors("AllowAll");
-
-// Swagger UI (available in all environments)
-app.UseSwagger();
-app.UseSwaggerUI(c =>
+// ── Security Headers Middleware ───────────────────────────────
+app.Use(async (ctx, next) =>
 {
-    c.SwaggerEndpoint("/swagger/v1/swagger.json", "ChatApp API v1");
-    c.RoutePrefix = string.Empty; // Opens Swagger at root URL
-    c.DocumentTitle = "ChatApp API Documentation";
+    ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    ctx.Response.Headers["X-Frame-Options"] = "DENY";
+    ctx.Response.Headers["X-XSS-Protection"] = "0";    // CSP is the modern replacement
+    ctx.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+    if (!app.Environment.IsDevelopment())
+    {
+        ctx.Response.Headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
+        ctx.Response.Headers["Content-Security-Policy"] =
+            "default-src 'self'; " +
+            "connect-src 'self' wss:; " +
+            "img-src 'self' data: https://res.cloudinary.com; " +
+            "script-src 'self'; " +
+            "style-src 'self' 'unsafe-inline';";
+    }
+    await next();
 });
 
-// HTTPS Redirection
-//if (!app.Environment.IsDevelopment())
-//{
-//    app.UseHttpsRedirection();
-//}
+app.UseCors("SecurePolicy");
 
 if (app.Environment.IsDevelopment())
 {
-    app.UseHttpsRedirection();
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "ChatApp API v1");
+        c.RoutePrefix = "swagger";
+    });
 }
 
-// Authentication & Authorization
+app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
-
-// Map Controllers
 app.MapControllers();
-
-// Map SignalR Hub
-
 app.MapHub<ChatHub>("/hubs/chat").RequireAuthorization();
 app.MapHub<CallHub>("/hubs/call").RequireAuthorization();
 
-// ========================================
-// Application Info (Optional)
-// ========================================
-app.MapGet("/", () => new
-{
-    application = "ChatApp API",
-    version = "1.0.0",
-    status = "Running",
-    timestamp = DateTime.UtcNow,
-    documentation = "/swagger",
-    signalr = "/hubs/chat"
-}).ExcludeFromDescription();
-
-// ========================================
-// Health Check (Optional but recommended)
-// ========================================
-app.MapGet("/health", () => Results.Ok(new
-{
-    status = "Healthy",
-    timestamp = DateTime.UtcNow
-})).ExcludeFromDescription();
-
-// ========================================
-// Start Application
-// ========================================
-Console.WriteLine("🚀 ChatApp API Starting...");
-Console.WriteLine($"📝 Swagger UI: {app.Urls.FirstOrDefault() ?? "http://localhost:5000"}");
-Console.WriteLine($"🔌 SignalR Hub: {app.Urls.FirstOrDefault() ?? "http://localhost:5000"}/hubs/chat");
+app.MapGet("/health", () => Results.Ok(new { status = "Healthy", timestamp = DateTime.UtcNow }))
+   .ExcludeFromDescription();
 
 app.Run();
-
-Console.WriteLine("✅ ChatApp API is running successfully!");

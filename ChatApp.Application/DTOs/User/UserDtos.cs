@@ -1,10 +1,6 @@
 ﻿namespace ChatApp.Application.DTOs.User;
 
-public record UserDto(
-    Guid UserId,
-    string UserName,
-    string DisplayName,
-    DateTime CreatedAtUtc);
+
 
 public record UserProfileDto(
     Guid UserId,
