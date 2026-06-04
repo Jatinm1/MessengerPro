@@ -8,6 +8,7 @@
 //   VULN-025: JWT key minimum 32-char enforced at startup
 // ============================================================
 using ChatApp.Api.Hubs;
+using ChatApp.Api.Middleware;
 using ChatApp.Application.Interfaces.IRepositories;
 using ChatApp.Application.Interfaces.IServices;
 using ChatApp.Application.Services;
@@ -168,11 +169,13 @@ if (builder.Environment.IsDevelopment())
 var app = builder.Build();
 
 // ── Security Headers Middleware ───────────────────────────────
+// Replace the pipeline section at the bottom of Program.cs (after app.Build())
+
 app.Use(async (ctx, next) =>
 {
     ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
     ctx.Response.Headers["X-Frame-Options"] = "DENY";
-    ctx.Response.Headers["X-XSS-Protection"] = "0";    // CSP is the modern replacement
+    ctx.Response.Headers["X-XSS-Protection"] = "0";
     ctx.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
     if (!app.Environment.IsDevelopment())
     {
@@ -187,7 +190,8 @@ app.Use(async (ctx, next) =>
     await next();
 });
 
-app.UseCors("SecurePolicy");
+app.UseHttpsRedirection();   // ← must be BEFORE auth
+app.UseCors("SecurePolicy"); // ← must be BEFORE auth
 
 if (app.Environment.IsDevelopment())
 {
@@ -199,7 +203,7 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-app.UseHttpsRedirection();
+app.UseTokenRefresh();       // ← ADD THIS (was missing entirely)
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
