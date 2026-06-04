@@ -5,7 +5,11 @@
 //   VULN-003: Cookie-based token extraction for SignalR
 //   VULN-005: Tokens set via HttpOnly cookies; Bearer reads from
 //             access_token cookie first, then Authorization header
+//   VULN-011: Full security headers — CSP, HSTS, X-Frame-Options,
+//             X-Content-Type-Options, Referrer-Policy, Permissions-Policy
+//   VULN-018: CSRF Double Submit Cookie middleware
 //   VULN-025: JWT key minimum 32-char enforced at startup
+//   VULN-028: Cache-Control no-store on all authenticated responses
 // ============================================================
 using ChatApp.Api.Hubs;
 using ChatApp.Api.Middleware;
@@ -121,8 +125,6 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 }
 
                 // SignalR: fall back to query string (only for /hubs/* paths)
-                // Note: The query-string token must be the access token from the cookie
-                // On the Angular side, we pass it once during hub negotiation.
                 if (path.StartsWithSegments("/hubs"))
                 {
                     var qsToken = context.Request.Query["access_token"];
@@ -160,7 +162,17 @@ if (builder.Environment.IsDevelopment())
         c.AddSecurityDefinition("Bearer", securityScheme);
         c.AddSecurityRequirement(new OpenApiSecurityRequirement
         {
-            { new OpenApiSecurityScheme { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" } }, Array.Empty<string>() }
+            {
+                new OpenApiSecurityScheme
+                {
+                    Reference = new OpenApiReference
+                    {
+                        Type = ReferenceType.SecurityScheme,
+                        Id   = "Bearer"
+                    }
+                },
+                Array.Empty<string>()
+            }
         });
     });
 }
@@ -168,30 +180,17 @@ if (builder.Environment.IsDevelopment())
 // ── Build ─────────────────────────────────────────────────────
 var app = builder.Build();
 
-// ── Security Headers Middleware ───────────────────────────────
-// Replace the pipeline section at the bottom of Program.cs (after app.Build())
+// ── VULN-011: Security Headers Middleware ────────────────────
+// Must be first in pipeline — before CORS, auth, routing.
+app.UseSecurityHeaders();
 
-app.Use(async (ctx, next) =>
-{
-    ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
-    ctx.Response.Headers["X-Frame-Options"] = "DENY";
-    ctx.Response.Headers["X-XSS-Protection"] = "0";
-    ctx.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
-    if (!app.Environment.IsDevelopment())
-    {
-        ctx.Response.Headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
-        ctx.Response.Headers["Content-Security-Policy"] =
-            "default-src 'self'; " +
-            "connect-src 'self' wss:; " +
-            "img-src 'self' data: https://res.cloudinary.com; " +
-            "script-src 'self'; " +
-            "style-src 'self' 'unsafe-inline';";
-    }
-    await next();
-});
+// ── VULN-018: CSRF Double Submit Cookie Middleware ────────────
+app.UseCsrfProtection();
 
-app.UseHttpsRedirection();   // ← must be BEFORE auth
-app.UseCors("SecurePolicy"); // ← must be BEFORE auth
+// ── VULN-028: Cache-Control no-store on authenticated routes ─
+app.UseCacheControl();
+
+app.UseCors("SecurePolicy");
 
 if (app.Environment.IsDevelopment())
 {
@@ -203,9 +202,12 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-app.UseTokenRefresh();       // ← ADD THIS (was missing entirely)
+app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
+
+app.UseMiddleware<TokenRefreshMiddleware>();
+
 app.MapControllers();
 app.MapHub<ChatHub>("/hubs/chat").RequireAuthorization();
 app.MapHub<CallHub>("/hubs/call").RequireAuthorization();
