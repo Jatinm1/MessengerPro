@@ -38,6 +38,7 @@ public sealed class CsrfMiddleware
     {
         "/api/auth/login",
         "/api/auth/register",
+        "/api/auth/signalr-token",   // issued right after login before XSRF cookie is set
         "/hubs/",
         "/health"
     };
@@ -68,8 +69,8 @@ public sealed class CsrfMiddleware
             context.Response.Cookies.Append(CookieName, token, new CookieOptions
             {
                 HttpOnly = false,                          // Angular must read this
-                Secure = _isProduction,
-                SameSite = SameSiteMode.Strict,
+                Secure = true,
+                SameSite = SameSiteMode.None,
                 Path = "/",
                 Expires = DateTimeOffset.UtcNow.AddHours(8)
             });

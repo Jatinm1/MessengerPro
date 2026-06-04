@@ -180,8 +180,14 @@ if (builder.Environment.IsDevelopment())
 // ── Build ─────────────────────────────────────────────────────
 var app = builder.Build();
 
+// ── CORS must be FIRST — before every middleware that can
+//   short-circuit the pipeline (CSRF 403, security headers, etc.)
+//   If any middleware returns a response before CORS runs,
+//   the response lacks Access-Control-Allow-Origin and the
+//   browser reports a CORS error regardless of the real cause.
+app.UseCors("SecurePolicy");
+
 // ── VULN-011: Security Headers Middleware ────────────────────
-// Must be first in pipeline — before CORS, auth, routing.
 app.UseSecurityHeaders();
 
 // ── VULN-018: CSRF Double Submit Cookie Middleware ────────────
@@ -189,8 +195,6 @@ app.UseCsrfProtection();
 
 // ── VULN-028: Cache-Control no-store on authenticated routes ─
 app.UseCacheControl();
-
-app.UseCors("SecurePolicy");
 
 if (app.Environment.IsDevelopment())
 {
