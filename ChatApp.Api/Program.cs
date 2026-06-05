@@ -10,6 +10,7 @@
 //   VULN-018: CSRF Double Submit Cookie middleware
 //   VULN-025: JWT key minimum 32-char enforced at startup
 //   VULN-028: Cache-Control no-store on all authenticated responses
+//   SWAGGER:  Controlled via Swagger:Enabled config / Railway env var
 // ============================================================
 using ChatApp.Api.Hubs;
 using ChatApp.Api.Middleware;
@@ -46,7 +47,7 @@ var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
 
 // ── CORS ──────────────────────────────────────────────────────
 var allowedOrigins = cfg.GetSection("Cors:AllowedOrigins").Get<string[]>()
-    ?? new[] { "http://localhost:4200", "https://messenger-pro-front.vercel.app/" };
+    ?? new[] { "http://localhost:4200" };
 
 builder.Services.AddCors(options =>
 {
@@ -102,9 +103,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         {
             ValidateIssuerSigningKey = true,
             IssuerSigningKey = signingKey,
-            ValidateIssuer = true,   // VULN-002 fix
+            ValidateIssuer = true,        // VULN-002 fix
             ValidIssuer = jwtIssuer,
-            ValidateAudience = true,   // VULN-002 fix
+            ValidateAudience = true,        // VULN-002 fix
             ValidAudience = jwtAudience,
             ValidateLifetime = true,
             ClockSkew = TimeSpan.Zero
@@ -143,12 +144,22 @@ builder.Services.AddAuthorization();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 
-// ── Swagger (dev only) ────────────────────────────────────────
-if (builder.Environment.IsDevelopment())
+// ── Swagger ───────────────────────────────────────────────────
+// Enabled when:
+//   - Running locally (IsDevelopment), OR
+//   - Swagger:Enabled = true in config / Railway env var
+//
+// To enable on Railway, add this env variable in the Railway dashboard:
+//   Swagger__Enabled = true
+var enableSwagger = builder.Environment.IsDevelopment()
+    || cfg.GetValue<bool>("Swagger:Enabled");
+
+if (enableSwagger)
 {
     builder.Services.AddSwaggerGen(c =>
     {
         c.SwaggerDoc("v1", new OpenApiInfo { Title = "ChatApp API", Version = "v1" });
+
         var securityScheme = new OpenApiSecurityScheme
         {
             Name = "Authorization",
@@ -157,8 +168,13 @@ if (builder.Environment.IsDevelopment())
             Type = SecuritySchemeType.ApiKey,
             Scheme = "Bearer",
             BearerFormat = "JWT",
-            Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+            Reference = new OpenApiReference
+            {
+                Type = ReferenceType.SecurityScheme,
+                Id = "Bearer"
+            }
         };
+
         c.AddSecurityDefinition("Bearer", securityScheme);
         c.AddSecurityRequirement(new OpenApiSecurityRequirement
         {
@@ -187,16 +203,17 @@ var app = builder.Build();
 //   browser reports a CORS error regardless of the real cause.
 app.UseCors("SecurePolicy");
 
-// ── VULN-011: Security Headers Middleware ────────────────────
+// ── VULN-011: Security Headers Middleware ─────────────────────
 app.UseSecurityHeaders();
 
 // ── VULN-018: CSRF Double Submit Cookie Middleware ────────────
 app.UseCsrfProtection();
 
-// ── VULN-028: Cache-Control no-store on authenticated routes ─
+// ── VULN-028: Cache-Control no-store on authenticated routes ──
 app.UseCacheControl();
 
-if (app.Environment.IsDevelopment())
+// ── Swagger UI ────────────────────────────────────────────────
+if (enableSwagger)
 {
     app.UseSwagger();
     app.UseSwaggerUI(c =>
