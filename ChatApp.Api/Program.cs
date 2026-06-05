@@ -46,7 +46,7 @@ var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
 
 // ── CORS ──────────────────────────────────────────────────────
 var allowedOrigins = cfg.GetSection("Cors:AllowedOrigins").Get<string[]>()
-    ?? new[] { "http://localhost:4200" };
+    ?? new[] { "http://localhost:4200", "https://messenger-pro-front.vercel.app/" };
 
 builder.Services.AddCors(options =>
 {
